@@ -174,22 +174,40 @@
       };
 
       // state polling
-      async function refreshState() {
+      async function refreshStatus() {
         try {
-          const r = await fetch("/state");
-          const s = await r.json();
-          document.getElementById("phase-label").textContent =
-            s.phase.toUpperCase();
-          document.getElementById("phase-time").textContent = asClock(
-            s.phase_remaining_sec
-          );
-          document.getElementById("total-time").textContent = asClock(
-            s.total_remaining_sec
-          );
-          // update ceklis aktif
-          updateWaterActive(s.water_active || {});
+          const r = await fetch("/status");
+          const d = await r.json();
+          document.getElementById("nav-temp").textContent = d.temperature;
+          document.getElementById("nav-hum").textContent = d.humidity;
+          document.getElementById("nav-light").textContent = d.light;
+          document.getElementById("nav-status").textContent = d.system_status;
+
+          document.getElementById("mon-temp").textContent = d.temperature;
+          document.getElementById("mon-hum").textContent = d.humidity;
+          document.getElementById("mon-light").textContent = d.light;
+
+          // visual alert
+          const navbar = document.querySelector(".navbar");
+          if (d.alert_level === "bad") {
+            navbar.style.background = "rgba(200,0,0,0.6)";
+            navbar.style.backdropFilter = "blur(4px)";
+            if (!document.getElementById("alert-sound")) {
+              const beep = new Audio("https://actions.google.com/sounds/v1/alarms/beep_short.ogg");
+              beep.id = "alert-sound";
+              beep.play();
+            }
+          } else if (d.alert_level === "good") {
+            navbar.style.background = "rgba(0,128,0,0.4)";
+            const beep = document.getElementById("alert-sound");
+            if (beep) beep.remove();
+          } else {
+            navbar.style.background = "rgba(255,255,255,0.15)";
+          }
         } catch (_) {}
       }
+
+
       setInterval(refreshState, 1000);
 
       // navbar + monitor (5 menit)

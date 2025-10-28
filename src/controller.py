@@ -351,11 +351,40 @@ def route_state():
 
 @app.route("/status", methods=["GET"])
 def route_status():
+    # nilai ideal
+    try:
+        t = float(sensor_data["temperature"])
+        h = float(sensor_data["humidity"])
+        l = float(sensor_data["light"])
+    except:
+        t = h = l = None
+
+    # evaluasi kondisi
+    if t is None or h is None or l is None:
+        condition = "Data tidak tersedia"
+        alert_level = "unknown"
+    else:
+        issues = []
+        if t < 22 or t > 30:
+            issues.append("Suhu tidak ideal")
+        if h < 40 or h > 70:
+            issues.append("Kelembapan tidak ideal")
+        if l < 200 or l > 800:
+            issues.append("Pencahayaan tidak ideal")
+
+        if len(issues) == 0:
+            condition = "Kondisi ruangan ideal untuk belajar"
+            alert_level = "good"
+        else:
+            condition = ", ".join(issues)
+            alert_level = "bad"
+
     return jsonify({
-        "system_status": system_status,
+        "system_status": condition,
         "temperature": sensor_data["temperature"],
         "humidity": sensor_data["humidity"],
-        "light": sensor_data["light"]
+        "light": sensor_data["light"],
+        "alert_level": alert_level
     })
 
 # ============== MAIN ==============
