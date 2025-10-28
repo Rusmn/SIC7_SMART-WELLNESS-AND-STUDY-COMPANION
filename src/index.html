@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SWSC Timer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="/style.css" rel="stylesheet">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="nav-item">Temp: <span id="nav-temp">{{ temp }}</span> °C</div>
+    <div class="nav-item">Humidity: <span id="nav-hum">{{ hum }}</span> %</div>
+    <div class="nav-item">Light: <span id="nav-light">{{ light }}</span> lux</div>
+    <div class="nav-item">Status: <span id="nav-status">{{ status }}</span></div>
+  </nav>
+
+  <main class="page">
+    <section class="panel">
+      <div class="display">
+        <div class="display-title" id="phase-label">SESSION</div>
+        <div class="display-time" id="time-text">25:00</div>
+        <div class="display-actions">
+          <button id="btn-start" class="btn">Start</button>
+          <button id="btn-reset" class="btn btn-secondary">Reset</button>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div class="control-card">
+          <div class="control-top">
+            <button class="control-btn" id="break-minus">−</button>
+            <div class="control-value" id="break-value">{{ break_len }}</div>
+            <button class="control-btn" id="break-plus">+</button>
+          </div>
+          <div class="control-label">Break Length</div>
+        </div>
+
+        <div class="control-card">
+          <div class="control-top">
+            <button class="control-btn" id="session-minus">−</button>
+            <div class="control-value" id="session-value">{{ session_len }}</div>
+            <button class="control-btn" id="session-plus">+</button>
+          </div>
+          <div class="control-label">Session Length</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // Local UI state for lengths (authoritative countdown is on backend)
+    let sessionLen = parseInt(document.getElementById("session-value").textContent, 10);
+    let breakLen = parseInt(document.getElementById("break-value").textContent, 10);
+
+    function pad(n) { return n < 10 ? "0" + n : "" + n; }
+    function renderTime(remainingSec, phase) {
+      const m = Math.floor(remainingSec / 60);
+      const s = remainingSec % 60;
+      document.getElementById("time-text").textContent = `${pad(m)}:${pad(s)}`;
+      document.getElementById("phase-label").textContent = phase.toUpperCase();
+    }
+
+    // Poll timer every 1s
+    async function refreshTimer() {
+      try {
+        const res = await fetch("/timer");
+        const data = await res.json();
+        renderTime(data.remaining_sec, data.phase);
+      } catch (e) {
+        // noop
+      }
+    }
+
+    // Poll navbar every 5 minutes
+    async function refreshStatus() {
+      try {
+        const res = await fetch("/status");
+        const d = await res.json();
+        document.getElementById("nav-temp").textContent = d.temperature;
+        document.getElementById("nav-hum").textContent = d.humidity;
+        document.getElementById("nav-light").textContent = d.light;
+        document.getElementById("nav-status").textContent = d.system_status;
+      } catch (e) {
+        // noop
+      }
+    }
+
+    // Controls
+    document.getElementById("session-minus").onclick = () => {
+      sessionLen = Math.max(1, sessionLen - 1);
+      document.getElementById("session-value").textContent = sessionLen;
+    };
+    document.getElementById("session-plus").onclick = () => {
+      sessionLen = sessionLen + 1;
+      document.getElementById("session-value").textContent = sessionLen;
+    };
+    document.getElementById("break-minus").onclick = () => {
+      breakLen = Math.max(1, breakLen - 1);
+      document.getElementById("break-value").textContent = breakLen;
+    };
+    document.getElementById("break-plus").onclick = () => {
+      breakLen = breakLen + 1;
+      document.getElementById("break-value").textContent = breakLen;
+    };
+
+    document.getElementById("btn-start").onclick = async () => {
+      await fetch("/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_length_min: sessionLen,
+          break_length_min: breakLen
+        })
+      });
+      // immediate update
+      refreshTimer();
+    };
+
+    document.getElementById("btn-reset").onclick = async () => {
+      await fetch("/reset", { method: "POST" });
+      refreshTimer();
+    };
+
+    // Initial load + intervals
+    refreshTimer();
+    refreshStatus();
+    setInterval(refreshTimer, 1000);
+    setInterval(refreshStatus, 300000);
+  </script>
+</body>
+</html>
