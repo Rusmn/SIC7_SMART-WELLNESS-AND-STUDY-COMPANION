@@ -13,21 +13,21 @@ MQTT_KEEPALIVE = 60
 
 TOPIC_CONFIG_DURATION        = "swsc/config/duration"
 TOPIC_CONFIG_BREAK_INTERVAL  = "swsc/config/break_interval"
-TOPIC_CONFIG_BREAK_LENGTH    = "swsc/config/break_length"      # opsional
-TOPIC_CONFIG_WATER_REMINDER  = "swsc/config/water_reminder"    # on/off
+TOPIC_CONFIG_BREAK_LENGTH    = "swsc/config/break_length"
+TOPIC_CONFIG_WATER_REMINDER  = "swsc/config/water_reminder"
 
 TOPIC_CONTROL_START          = "swsc/control/start"
 TOPIC_CONTROL_STOP           = "swsc/control/stop"
 TOPIC_CONTROL_RESET          = "swsc/control/reset"
 
-TOPIC_ALERT_BREAK            = "swsc/alert/break"              # payload: START / END
-TOPIC_ALERT_WATER            = "swsc/alert/water"              # payload: START:<id> / STOP:<id>
+TOPIC_ALERT_BREAK            = "swsc/alert/break"
+TOPIC_ALERT_WATER            = "swsc/alert/water"
 
 TOPIC_STATUS = "swsc/status/#"
 TOPIC_DATA   = "swsc/data/#"
 TOPIC_ALERT  = "swsc/alert/#"
 
-# ============== APP INIT (single-folder) ==============
+# ============== APP INIT ==============
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(
     __name__,
@@ -36,24 +36,23 @@ app = Flask(
     static_url_path=""
 )
 
-# ============== SENSOR CACHE (Navbar) ==============
+# ============== SENSOR CACHE ==============
 sensor_data = {"temperature": "-", "humidity": "-", "light": "-"}
 system_status = "Disconnected"
 
-# ============== STUDY PLAN ==============
+# ============== STUDY PLAN MODEL ==============
 @dataclass
 class StudyPlan:
     duration_min: int
     break_interval_min: int
     break_count: int
     break_length_min: int
-    water_milestones: List[int]   # detik dari start untuk alarm minum
+    water_milestones: List[int]
     water_amount_ml_per: int
     water_total_ml: int
 
 def compute_plan(duration_min: int) -> StudyPlan:
     d = max(1, int(duration_min))
-    # rekomendasi break
     if d <= 30:
         interval, bcount, blen = d, 0, 0
     elif d <= 60:
@@ -65,7 +64,6 @@ def compute_plan(duration_min: int) -> StudyPlan:
     else:
         interval, bcount, blen = 60, d // 60, 15
 
-    # rekomendasi minum: tiap 30 menit, 250 ml per milestone
     water_every = 30
     per_ml = 250
     milestone_count = max(1, d // water_every)
@@ -82,25 +80,22 @@ def compute_plan(duration_min: int) -> StudyPlan:
         water_total_ml=total_ml
     )
 
-# ============== TIMER + SCHEDULER ==============
+# ============== TIMER / SCHEDULER ==============
 class Scheduler:
-    """Mengelola countdown, transisi phase, alarm break/water, dan ack."""
     def __init__(self):
         self.lock = threading.Lock()
         self.running = False
-        self.phase = "session"  # session | break
+        self.phase = "session"
         self.phase_remaining_sec = 0
         self.total_remaining_sec = 0
         self.plan: Optional[StudyPlan] = None
 
-        # jadwal internal
         self._start_epoch = None
         self._last_tick = None
         self._next_session_cut = 0
         self._breaks_left = 0
 
-        # water alarm
-        self._water_alarm_active: Dict[int, bool] = {}   # id -> active until ack
+        self._water_alarm_active: Dict[int, bool] = {}
         self._water_fired: Dict[int, bool] = {}
         self._last_water_buzz: float = 0.0
 
@@ -111,7 +106,9 @@ class Scheduler:
             self.phase = "session"
             self.total_remaining_sec = plan.duration_min * 60
             self._breaks_left = plan.break_count
-            self.phase_remaining_sec = min(self.total_remaining_sec, plan.break_interval_min * 60) if plan.break_count > 0 else self.total_remaining_sec
+            self.phase_remaining_sec = min(
+                self.total_remaining_sec, plan.break_interval_min * 60
+            ) if plan.break_count > 0 else self.total_remaining_sec
             self._start_epoch = time.time()
             self._last_tick = self._start_epoch
             self._next_session_cut = self.phase_remaining_sec
@@ -124,7 +121,6 @@ class Scheduler:
             self.running = False
             self._start_epoch = None
             self._last_tick = None
-            # matikan semua alarm water yang mungkin aktif
             for i, active in list(self._water_alarm_active.items()):
                 if active:
                     _mqtt_safe_publish(TOPIC_ALERT_WATER, f"STOP:{i}")
@@ -157,12 +153,10 @@ class Scheduler:
             now = time.time()
             elapsed = int(now - self._last_tick)
             if elapsed <= 0:
-                # tetap buzz water tiap 5 detik jika ada yang aktif
                 self._buzz_water_if_needed(now)
                 return
             self._last_tick = now
 
-            # hitung water milestones
             since_start = int(now - self._start_epoch)
             for idx, tsec in enumerate(self.plan.water_milestones):
                 if since_start >= tsec and not self._water_fired.get(idx, False):
@@ -170,10 +164,8 @@ class Scheduler:
                     self._water_alarm_active[idx] = True
                     _mqtt_safe_publish(TOPIC_ALERT_WATER, f"START:{idx}")
 
-            # buzz berkala jika masih aktif dan belum di-ack
             self._buzz_water_if_needed(now)
 
-            # update phase
             if self.phase == "session":
                 self.phase_remaining_sec = max(0, self.phase_remaining_sec - elapsed)
                 self.total_remaining_sec = max(0, self.total_remaining_sec - elapsed)
@@ -187,7 +179,9 @@ class Scheduler:
                         if self.total_remaining_sec == 0:
                             self.running = False
                         else:
-                            self.phase_remaining_sec = min(self.plan.break_interval_min * 60, self.total_remaining_sec)
+                            self.phase_remaining_sec = min(
+                                self.plan.break_interval_min * 60, self.total_remaining_sec
+                            )
                             self._next_session_cut += self.phase_remaining_sec
             else:
                 self.phase_remaining_sec = max(0, self.phase_remaining_sec - elapsed)
@@ -198,14 +192,14 @@ class Scheduler:
                         self.phase = "session"
                     else:
                         self.phase = "session"
-                        self.phase_remaining_sec = min(self.plan.break_interval_min * 60, self.total_remaining_sec)
+                        self.phase_remaining_sec = min(
+                            self.plan.break_interval_min * 60, self.total_remaining_sec
+                        )
                         self._next_session_cut += self.phase_remaining_sec
 
     def _buzz_water_if_needed(self, now: float):
-        # kirim ping tiap 5 detik selama masih aktif
         if any(self._water_alarm_active.values()) and (now - self._last_water_buzz >= 5.0):
             active_ids = [i for i, a in self._water_alarm_active.items() if a]
-            # payload ringkas untuk menjaga kompatibilitas
             _mqtt_safe_publish(TOPIC_ALERT_WATER, "PING:" + ",".join(map(str, active_ids)))
             self._last_water_buzz = now
 
@@ -233,7 +227,7 @@ class Scheduler:
 
 scheduler = Scheduler()
 
-# ============== MQTT RUNTIME ==============
+# ============== MQTT HANDLERS ==============
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
         client.subscribe(TOPIC_STATUS)
@@ -279,7 +273,7 @@ def _mqtt_safe_publish(topic: str, payload: str):
     except Exception as e:
         print("[WARNING] MQTT publish failed:", topic, payload, "|", e)
 
-# background tick
+# ============== BACKGROUND TICK ==============
 def tick_loop():
     while True:
         scheduler.tick()
@@ -351,7 +345,7 @@ def route_state():
 
 @app.route("/status", methods=["GET"])
 def route_status():
-    # nilai ideal
+    # analisis kondisi ideal
     try:
         t = float(sensor_data["temperature"])
         h = float(sensor_data["humidity"])
@@ -359,7 +353,6 @@ def route_status():
     except:
         t = h = l = None
 
-    # evaluasi kondisi
     if t is None or h is None or l is None:
         condition = "Data tidak tersedia"
         alert_level = "unknown"
