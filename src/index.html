@@ -2,114 +2,213 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>SWSC Timer</title>
+  <title>SWSC – Study Assistant</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="/style.css" rel="stylesheet">
 </head>
 <body>
   <nav class="navbar">
-    <div>Temp: <span id="nav-temp">{{ temp }}</span> °C</div>
-    <div>Humidity: <span id="nav-hum">{{ hum }}</span> %</div>
-    <div>Light: <span id="nav-light">{{ light }}</span> lux</div>
-    <div>Status: <span id="nav-status">{{ status }}</span></div>
+    <div class="nav-item">Temp: <span id="nav-temp">{{ temp }}</span> °C</div>
+    <div class="nav-item">Humidity: <span id="nav-hum">{{ hum }}</span> %</div>
+    <div class="nav-item">Light: <span id="nav-light">{{ light }}</span> lux</div>
+    <div class="nav-item">Status: <span id="nav-status">{{ status }}</span></div>
   </nav>
 
   <main class="page">
-    <section class="panel">
+    <section class="tabs">
+      <button class="tab-btn active" data-tab="tab-countdown">Countdown</button>
+      <button class="tab-btn" data-tab="tab-water">Ceklis Air</button>
+      <button class="tab-btn" data-tab="tab-monitor">Monitoring</button>
+    </section>
+
+    <!-- TAB 1: Countdown -->
+    <section id="tab-countdown" class="panel tab active">
+      <div class="planner">
+        <label for="durationInput">Total Study Duration (minutes)</label>
+        <div class="planner-row">
+          <input id="durationInput" type="number" min="1" value="60">
+          <button id="btn-calc" class="btn">Calculate</button>
+        </div>
+        <div class="plan-summary" id="planSummary">
+          <div>Break interval: <b id="plan-interval">-</b> min</div>
+          <div>Total breaks: <b id="plan-count">-</b> times</div>
+          <div>Each break: <b id="plan-length">-</b> min</div>
+          <div>Water milestones: <b id="plan-water-count">-</b> times</div>
+          <div>Water per milestone: <b id="plan-water-per">-</b> ml</div>
+          <div>Total water: <b id="plan-water-total">-</b> ml</div>
+        </div>
+      </div>
+
       <div class="display">
         <div class="display-title" id="phase-label">SESSION</div>
-        <div class="display-time" id="time-text">25:00</div>
+        <div class="display-time" id="phase-time">00:00</div>
+        <div class="sub-display">
+          <span class="sub-label">Total remaining</span>
+          <span class="sub-time" id="total-time">00:00</span>
+        </div>
         <div class="display-actions">
           <button id="btn-start" class="btn">Start</button>
+          <button id="btn-stop" class="btn btn-secondary">Stop</button>
           <button id="btn-reset" class="btn btn-secondary">Reset</button>
         </div>
       </div>
+    </section>
 
-      <div class="controls">
-        <div class="control-card">
-          <div class="control-top">
-            <button class="control-btn" id="break-minus">−</button>
-            <div class="control-value" id="break-value">{{ break_len }}</div>
-            <button class="control-btn" id="break-plus">+</button>
-          </div>
-          <div class="control-label">Break Length</div>
+    <!-- TAB 2: Ceklis Air -->
+    <section id="tab-water" class="panel tab">
+      <div class="water-list" id="water-list">
+        <div class="hint">Belum ada plan. Hitung dulu di tab Countdown, lalu tekan Start.</div>
+      </div>
+    </section>
+
+    <!-- TAB 3: Monitoring -->
+    <section id="tab-monitor" class="panel tab">
+      <div class="monitor-grid">
+        <div class="monitor-card">
+          <div class="monitor-title">Temperature</div>
+          <div class="monitor-value"><span id="mon-temp">{{ temp }}</span> °C</div>
         </div>
-
-        <div class="control-card">
-          <div class="control-top">
-            <button class="control-btn" id="session-minus">−</button>
-            <div class="control-value" id="session-value">{{ session_len }}</div>
-            <button class="control-btn" id="session-plus">+</button>
-          </div>
-          <div class="control-label">Session Length</div>
+        <div class="monitor-card">
+          <div class="monitor-title">Humidity</div>
+          <div class="monitor-value"><span id="mon-hum">{{ hum }}</span> %</div>
+        </div>
+        <div class="monitor-card">
+          <div class="monitor-title">Light</div>
+          <div class="monitor-value"><span id="mon-light">{{ light }}</span> lux</div>
         </div>
       </div>
+      <div class="muted">Data diperbarui setiap ±5 menit atau saat ada pesan IoT.</div>
     </section>
   </main>
 
   <script>
-    let sessionLen = parseInt(document.getElementById("session-value").textContent, 10);
-    let breakLen = parseInt(document.getElementById("break-value").textContent, 10);
+    // util
+    function pad(n){ return n < 10 ? "0" + n : n; }
+    function asClock(sec){ const m = Math.floor(sec/60), s = sec%60; return `${pad(m)}:${pad(s)}`; }
 
-    function pad(n) { return n < 10 ? "0" + n : n; }
-    function renderTime(remaining, phase) {
-      const m = Math.floor(remaining / 60);
-      const s = remaining % 60;
-      document.getElementById("time-text").textContent = `${pad(m)}:${pad(s)}`;
-      document.getElementById("phase-label").textContent = phase.toUpperCase();
+    // tabs
+    document.querySelectorAll(".tab-btn").forEach(btn=>{
+      btn.onclick = () => {
+        document.querySelectorAll(".tab-btn").forEach(b=>b.classList.remove("active"));
+        document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+        btn.classList.add("active");
+        document.getElementById(btn.dataset.tab).classList.add("active");
+      };
+    });
+
+    // plan
+    async function calcPlan(){
+      const duration = Math.max(1, parseInt(document.getElementById("durationInput").value||"0", 10));
+      const r = await fetch("/plan", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({duration_min: duration})
+      });
+      const p = await r.json();
+      document.getElementById("plan-interval").textContent = p.break_interval_min;
+      document.getElementById("plan-count").textContent = p.break_count;
+      document.getElementById("plan-length").textContent = p.break_length_min;
+      document.getElementById("plan-water-count").textContent = p.water_milestones.length;
+      document.getElementById("plan-water-per").textContent = p.water_amount_ml_per;
+      document.getElementById("plan-water-total").textContent = p.water_total_ml;
+      // render list ceklis
+      renderWaterList(p.water_milestones, p.water_amount_ml_per);
+      return p;
     }
+    document.getElementById("btn-calc").onclick = calcPlan;
 
-    async function refreshTimer() {
-      const res = await fetch("/timer");
-      const data = await res.json();
-      renderTime(data.remaining_sec, data.phase);
-    }
-
-    async function refreshStatus() {
-      const res = await fetch("/status");
-      const d = await res.json();
-      document.getElementById("nav-temp").textContent = d.temperature;
-      document.getElementById("nav-hum").textContent = d.humidity;
-      document.getElementById("nav-light").textContent = d.light;
-      document.getElementById("nav-status").textContent = d.system_status;
-    }
-
+    // start/stop/reset
     document.getElementById("btn-start").onclick = async () => {
+      const duration = Math.max(1, parseInt(document.getElementById("durationInput").value||"0", 10));
       await fetch("/start", {
         method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          session_length_min: sessionLen,
-          break_length_min: breakLen
-        })
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({duration_min: duration})
       });
+      await calcPlan(); // sinkron ulang daftar ceklis
     };
+    document.getElementById("btn-stop").onclick  = async ()=>{ await fetch("/stop",  {method:"POST"}); };
+    document.getElementById("btn-reset").onclick = async ()=>{ await fetch("/reset", {method:"POST"}); renderWaterList([], 0); };
 
-    document.getElementById("btn-reset").onclick = async () => {
-      await fetch("/reset", {method: "POST"});
-    };
+    // state polling
+    async function refreshState(){
+      try{
+        const r = await fetch("/state");
+        const s = await r.json();
+        document.getElementById("phase-label").textContent = s.phase.toUpperCase();
+        document.getElementById("phase-time").textContent = asClock(s.phase_remaining_sec);
+        document.getElementById("total-time").textContent = asClock(s.total_remaining_sec);
+        // update ceklis aktif
+        updateWaterActive(s.water_active || {});
+      }catch(_){}
+    }
+    setInterval(refreshState, 1000);
 
-    document.getElementById("session-minus").onclick = () => {
-      sessionLen = Math.max(1, sessionLen - 1);
-      document.getElementById("session-value").textContent = sessionLen;
-    };
-    document.getElementById("session-plus").onclick = () => {
-      sessionLen += 1;
-      document.getElementById("session-value").textContent = sessionLen;
-    };
-    document.getElementById("break-minus").onclick = () => {
-      breakLen = Math.max(1, breakLen - 1);
-      document.getElementById("break-value").textContent = breakLen;
-    };
-    document.getElementById("break-plus").onclick = () => {
-      breakLen += 1;
-      document.getElementById("break-value").textContent = breakLen;
-    };
+    // navbar + monitor (5 menit)
+    async function refreshStatus(){
+      try{
+        const r = await fetch("/status");
+        const d = await r.json();
+        document.getElementById("nav-temp").textContent = d.temperature;
+        document.getElementById("nav-hum").textContent = d.humidity;
+        document.getElementById("nav-light").textContent = d.light;
+        document.getElementById("nav-status").textContent = d.system_status;
 
-    refreshTimer();
-    refreshStatus();
-    setInterval(refreshTimer, 1000);
+        document.getElementById("mon-temp").textContent = d.temperature;
+        document.getElementById("mon-hum").textContent = d.humidity;
+        document.getElementById("mon-light").textContent = d.light;
+      }catch(_){}
+    }
     setInterval(refreshStatus, 300000);
+    refreshStatus();
+
+    // water checklist UI
+    function renderWaterList(milestones, per_ml){
+      const host = document.getElementById("water-list");
+      if(!milestones || milestones.length===0){
+        host.innerHTML = '<div class="hint">Tidak ada milestone minum. Hitung plan lalu mulai.</div>';
+        return;
+      }
+      const items = milestones.map((sec, idx)=>{
+        const t = asClock(sec);
+        return `
+          <div class="water-item" data-id="${idx}">
+            <div class="water-left">
+              <div class="water-title">Milestone ${idx+1}</div>
+              <div class="water-time">At ${t}</div>
+            </div>
+            <div class="water-right">
+              <div class="water-ml">${per_ml} ml</div>
+              <label class="water-check">
+                <input type="checkbox" data-check="${idx}"> Done
+              </label>
+            </div>
+          </div>`;
+      }).join("");
+      host.innerHTML = items;
+      host.querySelectorAll('input[type="checkbox"]').forEach(cb=>{
+        cb.onchange = async (e)=>{
+          const id = parseInt(e.target.getAttribute("data-check"),10);
+          if(e.target.checked){
+            await fetch("/water_ack", {
+              method:"POST",
+              headers: {"Content-Type":"application/json"},
+              body: JSON.stringify({milestone_id: id})
+            });
+          }
+        };
+      });
+    }
+
+    function updateWaterActive(map){
+      // tandai item yang sedang aktif (bunyi) agar terlihat
+      const host = document.getElementById("water-list");
+      host.querySelectorAll(".water-item").forEach(el=>{
+        const id = parseInt(el.getAttribute("data-id"),10);
+        const active = !!map[id];
+        el.classList.toggle("active", active);
+      });
+    }
   </script>
 </body>
 </html>
