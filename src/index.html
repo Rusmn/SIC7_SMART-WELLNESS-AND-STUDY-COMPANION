@@ -10,7 +10,7 @@
     <nav class="navbar">
       <div class="nav-item">Temp: <span id="nav-temp">{{ temp }}</span> °C</div>
       <div class="nav-item">Humidity: <span id="nav-hum">{{ hum }}</span> %</div>
-      <div class="nav-item">Light: <span id="nav-light">{{ light }}</span> lux</div>
+      <div class="nav-item">Light: <span id="nav-light">{{ light }}</span></div>
       <div class="nav-item">Status: <span id="nav-status">{{ status }}</span></div>
     </nav>
 
@@ -19,9 +19,9 @@
         <button class="tab-btn active" data-tab="tab-countdown">Countdown</button>
         <button class="tab-btn" data-tab="tab-water">Ceklis Air</button>
         <button class="tab-btn" data-tab="tab-monitor">Monitoring</button>
+        <button class="tab-btn" data-tab="tab-debug" id="debug-tab-button">Debug</button>
       </section>
 
-      <!-- TAB 1 -->
       <section id="tab-countdown" class="panel tab active">
         <div class="planner">
           <label for="durationInput">Total Study Duration (minutes)</label>
@@ -54,7 +54,6 @@
         </div>
       </section>
 
-      <!-- TAB 2 -->
       <section id="tab-water" class="panel tab">
         <div class="water-list" id="water-list">
           <div class="hint">
@@ -63,7 +62,6 @@
         </div>
       </section>
 
-      <!-- TAB 3 -->
       <section id="tab-monitor" class="panel tab">
         <div class="monitor-grid">
           <div class="monitor-card">
@@ -76,14 +74,64 @@
           </div>
           <div class="monitor-card">
             <div class="monitor-title">Light</div>
-            <div class="monitor-value"><span id="mon-light">{{ light }}</span> lux</div>
+            <div class="monitor-value"><span id="mon-light">{{ light }}</span></div>
           </div>
         </div>
-        <div class="muted">Data diperbarui setiap ±5 menit atau saat ada pesan IoT.</div>
+        <div class="monitor-summary-card" id="mon-summary-card">
+          <div class="monitor-title">Kesimpulan Kondisi</div>
+          <div class="monitor-value" id="mon-summary-text">Memuat...</div>
+        </div>
+        <div class="muted">Data diperbarui setiap ±2 detik atau saat ada pesan IoT.</div>
+      </section>
+
+      <section id="tab-debug" class="panel tab">
+        <div class="debug-panel">
+          <h3>Panel Debug ESP32</h3>
+          <p class="hint">
+            Tombol ini mengirim pesan MQTT palsu untuk menguji
+            reaksi hardware (LED & Buzzer) secara instan.
+          </p>
+          
+          <div class="debug-group">
+            <h4>Tes Sesi</h4>
+            <button id="dbg-session-stop" class="btn btn-debug">Tes: Sesi Selesai (Stop)</button>
+            <button id="dbg-session-reset" class="btn btn-debug">Tes: Reset</button>
+          </div>
+
+          <div class="debug-group">
+            <h4>Tes Istirahat (Break)</h4>
+            <button id="dbg-break-start" class="btn btn-debug">Tes: Mulai Istirahat</button>
+            <button id="dbg-break-end" class="btn btn-debug">Tes: Akhir Istirahat</button>
+          </div>
+
+          <div class="debug-group">
+            <h4>Tes Air (Water Alert)</h4>
+            <button id="dbg-water-start" class="btn btn-debug">Tes: Water Alert (ID 0)</button>
+            <button id="dbg-water-stop" class="btn btn-debug">Tes: Water Acknowledge (ID 0)</button>
+          </div>
+
+          <div class="debug-group">
+            <h4>Tes Sesi</h4>
+            <button id="dbg-session-start-test" class="btn btn-debug btn-debug-start">
+              Tes: Mulai Sesi Tes 5 Menit
+            </button>
+            <button id="dbg-session-stop" class="btn btn-debug">Tes: Sesi Selesai (Stop)</button>
+            <button id="dbg-session-reset" class="btn btn-debug">Tes: Reset</button>
+          </div>
+        </div>
       </section>
     </main>
 
     <script>
+      const DEBUG_MODE = false; 
+
+      if (!DEBUG_MODE) {
+        const btn = document.getElementById("debug-tab-button");
+        const panel = document.getElementById("tab-debug");
+        if (btn) btn.style.display = "none";
+        if (panel) panel.style.display = "none";
+      }
+
       function pad(n) {
         return n < 10 ? "0" + n : n;
       }
@@ -154,30 +202,33 @@
         try {
           const r = await fetch("/status");
           const d = await r.json();
+          const lightText = d.light === "0.0" ? "Gelap" : "Terang";
           document.getElementById("nav-temp").textContent = d.temperature;
           document.getElementById("nav-hum").textContent = d.humidity;
-          document.getElementById("nav-light").textContent = d.light;
+          document.getElementById("nav-light").textContent = lightText;
           document.getElementById("nav-status").textContent = d.system_status;
 
           document.getElementById("mon-temp").textContent = d.temperature;
           document.getElementById("mon-hum").textContent = d.humidity;
-          document.getElementById("mon-light").textContent = d.light;
+          document.getElementById("mon-light").textContent = lightText;
 
+          const summaryCard = document.getElementById("mon-summary-card");
+          const summaryText = document.getElementById("mon-summary-text");
           const navbar = document.querySelector(".navbar");
+          
           if (d.alert_level === "bad") {
             navbar.style.background = "rgba(200,0,0,0.6)";
             navbar.style.backdropFilter = "blur(4px)";
-            if (!document.getElementById("alert-sound")) {
-              const beep = new Audio("https://actions.google.com/sounds/v1/alarms/beep_short.ogg");
-              beep.id = "alert-sound";
-              beep.play();
-            }
+            summaryText.textContent = "Tidak Ideal";
+            summaryCard.className = "monitor-summary-card bad";
           } else if (d.alert_level === "good") {
             navbar.style.background = "rgba(0,128,0,0.4)";
-            const beep = document.getElementById("alert-sound");
-            if (beep) beep.remove();
+            summaryText.textContent = "Ideal";
+            summaryCard.className = "monitor-summary-card good";
           } else {
             navbar.style.background = "rgba(255,255,255,0.15)";
+            summaryText.textContent = "Data Tidak Ada";
+            summaryCard.className = "monitor-summary-card unknown";
           }
         } catch (_) {}
       }
@@ -228,6 +279,51 @@
           const active = !!map[id];
           el.classList.toggle("active", active);
         });
+      }
+
+      async function startTestSession() {
+        try {
+          const r = await fetch("/debug/start_test", { method: "POST" });
+          const data = await r.json();
+          
+          if (data.plan) {
+            const p = data.plan;
+            document.getElementById("plan-interval").textContent = p.break_interval_min;
+            document.getElementById("plan-count").textContent = p.break_count;
+            document.getElementById("plan-length").textContent = p.break_length_min;
+            document.getElementById("plan-water-count").textContent = p.water_milestones.length;
+            document.getElementById("plan-water-per").textContent = p.water_amount_ml_per;
+            document.getElementById("plan-water-total").textContent = p.water_total_ml;
+            renderWaterList(p.water_milestones, p.water_amount_ml_per);
+            document.querySelector('[data-tab="tab-countdown"]').click();
+          }
+        } catch (e) {
+          console.error("Start test session failed", e);
+        }
+      }
+      
+      async function triggerDebug(event, payload = "") {
+        try {
+          await fetch("/debug/trigger", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ event: event, payload: payload }),
+          });
+        } catch (e) {
+          console.error("Debug trigger failed", e);
+        }
+      }
+      
+      if (DEBUG_MODE) {
+        document.getElementById("dbg-session-start-test").onclick = startTestSession;
+        document.getElementById("dbg-session-stop").onclick = () => triggerDebug("force_stop");
+        document.getElementById("dbg-session-reset").onclick = () => triggerDebug("force_reset");
+        
+        document.getElementById("dbg-break-start").onclick = () => triggerDebug("break_start");
+        document.getElementById("dbg-break-end").onclick = () => triggerDebug("break_end");
+
+        document.getElementById("dbg-water-start").onclick = () => triggerDebug("water_start", "0");
+        document.getElementById("dbg-water-stop").onclick = () => triggerDebug("water_stop", "0");
       }
     </script>
   </body>

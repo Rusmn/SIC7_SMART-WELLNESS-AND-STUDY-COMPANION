@@ -1,18 +1,4 @@
-/*****************************************************
- * SMART WELLNESS & STUDY COMPANION (SWSC) – ESP32
- * ---------------------------------------------------
- * ESP32 + DHT11 + LDR + OLED SSD1306 + RGB LED + Buzzer
- * MQTT (HiveMQ) — sinkron dengan Flask backend (controller.py)
- *
- * Fitur utama:
- * - Subscribe awal ke swsc/config/#, swsc/control/#, swsc/alert/#
- * - Terima retained config → OLED tidak lagi "Waiting for Config"
- * - Handler alert break & water (START/END, START:id/STOP:id, PING)
- * - Publish data sensor ke swsc/data/* (±2 detik)
- * - Publish status sistem ke swsc/status/system
- * - Reconnect WiFi & MQTT dengan re-subscribe otomatis
- *****************************************************/
-
+// Includes
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <Wire.h>
@@ -20,13 +6,13 @@
 #include <Adafruit_SSD1306.h>
 #include <DHT.h>
 
-/* ================== NETWORK CONFIG ================== */
-const char* WIFI_SSID     = "AworaworG";     // ← ganti jika perlu
-const char* WIFI_PASS     = "HRRZYA22";      // ← ganti jika perlu
+// WiFi & MQTT Settings
+const char* WIFI_SSID     = "AworaworG";     
+const char* WIFI_PASS     = "HRRZYA22";     
 const char* MQTT_SERVER   = "broker.hivemq.com";
 const int   MQTT_PORT     = 1883;
 
-/* ============== TOPICS (HARUS SAMA DGN BACKEND) ============== */
+// MQTT Topics
 const char* TPC_CONFIG_DURATION       = "swsc/config/duration";
 const char* TPC_CONFIG_BREAK_INTERVAL = "swsc/config/break_interval";
 const char* TPC_CONFIG_BREAK_LENGTH   = "swsc/config/break_length";
@@ -36,8 +22,8 @@ const char* TPC_CONTROL_START         = "swsc/control/start";
 const char* TPC_CONTROL_STOP          = "swsc/control/stop";
 const char* TPC_CONTROL_RESET         = "swsc/control/reset";
 
-const char* TPC_ALERT_BREAK           = "swsc/alert/break";  // "START" / "END"
-const char* TPC_ALERT_WATER           = "swsc/alert/water";  // "START:id" / "STOP:id" / "PING:ids"
+const char* TPC_ALERT_BREAK           = "swsc/alert/break"; 
+const char* TPC_ALERT_WATER           = "swsc/alert/water";
 
 const char* TPC_DATA_TEMP             = "swsc/data/temperature";
 const char* TPC_DATA_HUM              = "swsc/data/humidity";
@@ -45,58 +31,59 @@ const char* TPC_DATA_LIGHT            = "swsc/data/light";
 
 const char* TPC_STATUS_SYSTEM         = "swsc/status/system";
 
-/* ================== HARDWARE PINS ================== */
+// Pin Definitions
 #define DHT_PIN       4
 #define DHT_TYPE      DHT11
-#define LDR_PIN       34           // ADC1_CH6
-#define BUZZER_PIN    26           // ubah ke 18 jika rangkaianmu pakai 18
+#define LDR_PIN       34           
+#define BUZZER_PIN    26
 #define LED_RED       19
 #define LED_GREEN     23
 #define LED_BLUE      25
+#define BUZZER_FREQ   1500
 
-/* ================== OLED CONFIG ================== */
+// OLED Definitions
 #define OLED_WIDTH    128
 #define OLED_HEIGHT   64
 #define OLED_ADDRESS  0x3C
 
-/* ================== OBJECTS ================== */
+// Objects
 WiFiClient        espClient;
 PubSubClient      mqtt(espClient);
 Adafruit_SSD1306  display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
 DHT               dht(DHT_PIN, DHT_TYPE);
 
-/* ================== APP STATE ================== */
-// Konfigurasi sesi (datang dari retained config)
-volatile int  cfg_duration_min       = 0;    // total durasi
-volatile int  cfg_break_interval_min = 0;    // interval antar break
-volatile int  cfg_break_length_min   = 0;    // lama break
-volatile bool cfg_water_on           = false;
-
-volatile bool cfg_received_any       = false;   // minimal satu config diterima
-volatile bool cfg_ready              = false;   // semua config inti diterima
+// Configuration parameters
+volatile int  cfg_duration_min       = 0;     // total durasi
+volatile int  cfg_break_interval_min = 0;     // interval antar break
+volatile int  cfg_break_length_min   = 0;     // lama break
+volatile bool cfg_water_on           = false; 
+volatile bool cfg_received_any       = false; 
+volatile bool cfg_ready              = false; 
+volatile bool led_state              = false;
 
 // Status runtime
-volatile bool session_running        = false;   // START/STOP oleh backend
-volatile bool in_break               = false;   // break phase indikator
+volatile bool session_running        = false;
+volatile bool in_break               = false;
 volatile bool session_stopped        = false;
 
-// Water alarms (ID yang aktif → buzzer periodik sampai STOP/ack)
-static const int MAX_WATER_ALARMS = 32;   // aman untuk milestone banyak
+// Water reminder alarms
+static const int MAX_WATER_ALARMS = 32; 
 bool water_active[MAX_WATER_ALARMS] = { false };
 
 // Timing
 unsigned long lastSensorMs   = 0;
 unsigned long lastBuzzMs     = 0;
+unsigned long lastBlinkMs    = 0;
 unsigned long buzzUntilMs    = 0;
 
-// Buzzer cadence
+// Buzzer patterns
 const uint16_t BUZZ_SHORT_MS = 120;
 const uint16_t BUZZ_GAP_MS   = 100;
 
 // Sensor sampling interval
-const uint32_t SENSOR_INTERVAL_MS = 2000; // 2 detik
+const uint32_t SENSOR_INTERVAL_MS = 2000;
 
-/* ================== UTILS ================== */
+// Helpers
 void ledColor(uint8_t r, uint8_t g, uint8_t b) {
   digitalWrite(LED_RED,   r ? HIGH : LOW);
   digitalWrite(LED_GREEN, g ? HIGH : LOW);
@@ -104,10 +91,11 @@ void ledColor(uint8_t r, uint8_t g, uint8_t b) {
 }
 
 void buzzerOn() {
-  digitalWrite(BUZZER_PIN, HIGH);
+  tone(BUZZER_PIN, BUZZER_FREQ);
 }
+
 void buzzerOff() {
-  digitalWrite(BUZZER_PIN, LOW);
+  noTone(BUZZER_PIN);
 }
 
 void beepOnce(uint16_t ms) {
@@ -117,16 +105,22 @@ void beepOnce(uint16_t ms) {
 }
 
 void buzzPattern_BreakStart() {
-  // Tiga beep pendek: --- --- ---
   for (int i = 0; i < 3; ++i) {
     beepOnce(BUZZ_SHORT_MS);
     delay(BUZZ_GAP_MS);
   }
 }
+
 void buzzPattern_BreakEnd() {
-  // Dua beep panjang: ===== =====
   buzzerOn(); delay(300); buzzerOff(); delay(150);
   buzzerOn(); delay(300); buzzerOff();
+}
+
+void buzzPattern_TwoBeeps() {
+  for (int i = 0; i < 2; ++i) {
+    beepOnce(BUZZ_SHORT_MS);
+    delay(BUZZ_GAP_MS);
+  }
 }
 
 void clearDisplay() {
@@ -195,7 +189,6 @@ void showStopped() {
 }
 
 void showEnv(float t, float h, int light) {
-  // small overlay summary (called after main screen or as tick)
   clearDisplay();
   display.setTextSize(1);
   display.setCursor(2, 0);
@@ -207,7 +200,7 @@ void showEnv(float t, float h, int light) {
   display.setCursor(2, 24);
   display.print("Hum : "); display.print(isnan(h) ? -1 : h); display.println(" %");
   display.setCursor(2, 34);
-  display.print("Light: "); display.print(light); display.println(" lux");
+  display.print("Light: "); display.println(light == 0 ? "Gelap" : "Terang");
 
   display.setCursor(2, 48);
   display.print("WiFi: "); display.print(WiFi.isConnected() ? "OK" : "OFF");
@@ -216,12 +209,11 @@ void showEnv(float t, float h, int light) {
   display.display();
 }
 
-/* ================== MQTT HELPERS ================== */
 void publishStatus(const char* msg) {
-  mqtt.publish(TPC_STATUS_SYSTEM, msg, true); // retain status
+  mqtt.publish(TPC_STATUS_SYSTEM, msg, true);
 }
 
-/* ================== WIFI & MQTT ================== */
+// Setup WiFi & MQTT
 void setupWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -254,24 +246,23 @@ void subscribeAll() {
 void connectMQTT() {
   mqtt.setServer(MQTT_SERVER, MQTT_PORT);
   Serial.print("[MQTT] Connecting to broker");
+
   while (!mqtt.connected()) {
     Serial.print(".");
     if (mqtt.connect(makeClientId().c_str())) break;
     delay(800);
   }
+
   Serial.println();
   Serial.println("[MQTT] Connected");
   subscribeAll();
-
-  // beri waktu broker mengirim retained msgs
   delay(500);
 
-  // Publish status awal
   if (!cfg_ready) publishStatus("Waiting for Config");
   else            publishStatus(session_running ? (in_break ? "Break" : "Running") : "Ready");
 }
 
-/* ================== CONFIG PARSER ================== */
+// Config parser
 void parseConfig(const char* topic, const String& payload) {
   if (strcmp(topic, TPC_CONFIG_DURATION) == 0) {
     cfg_duration_min = payload.toInt();
@@ -287,16 +278,15 @@ void parseConfig(const char* topic, const String& payload) {
     cfg_water_on = (v == "on" || v == "true" || v == "1");
     cfg_received_any = true;
   }
-  // Siap jika semua inti masuk (durasi + interval + length)
   cfg_ready = (cfg_duration_min > 0 && cfg_break_interval_min >= 0 && cfg_break_length_min >= 0);
   if (cfg_ready && !session_running) {
-    ledColor(0, 255, 0); // Green = configured
+    ledColor(0, 255, 0);
     showConfigured();
     publishStatus("Ready");
   }
 }
 
-/* ================== ALERT HANDLERS ================== */
+// Alert Handlers
 void resetWaterAlarms() {
   for (int i = 0; i < MAX_WATER_ALARMS; ++i) water_active[i] = false;
 }
@@ -304,13 +294,11 @@ void resetWaterAlarms() {
 void handleAlertBreak(const String& p) {
   if (p == "START") {
     in_break = true;
-    ledColor(255, 255, 0); // Yellow
-    buzzPattern_BreakStart();
+    buzzPattern_TwoBeeps();
     showRunning();
     publishStatus("Break");
   } else if (p == "END") {
     in_break = false;
-    ledColor(0, 255, 0); // Green back to running
     buzzPattern_BreakEnd();
     showRunning();
     publishStatus("Running");
@@ -318,42 +306,37 @@ void handleAlertBreak(const String& p) {
 }
 
 void handleAlertWater(const String& p) {
-  // "START:id" / "STOP:id" / "PING:ids"
   if (p.startsWith("START:")) {
     int id = p.substring(6).toInt();
     if (id >= 0 && id < MAX_WATER_ALARMS) {
       water_active[id] = true;
-      // bunyikan beep pendek saat mulai
       beepOnce(BUZZ_SHORT_MS);
     }
   } else if (p.startsWith("STOP:")) {
     int id = p.substring(5).toInt();
     if (id >= 0 && id < MAX_WATER_ALARMS) {
       water_active[id] = false;
-      // diamkan buzzer
       buzzerOff();
     }
   } else if (p.startsWith("PING:")) {
-    // PING:0,1,2 — cukup beep ringan, jangan blocking lama
-    // Jika ada water_active TRUE, akan ada beep periodik di loop
     beepOnce(80);
   }
 }
 
-/* ================== CONTROL HANDLERS ================== */
+// Control Handlers
 void handleControlStart() {
   if (!cfg_ready) {
-    // belum ada config lengkap
     publishStatus("Waiting for Config");
     showWaiting();
-    ledColor(0, 0, 255); // Blue
+    ledColor(0, 0, 255);
     return;
   }
+
   session_running = true;
   session_stopped = false;
   in_break = false;
   resetWaterAlarms();
-  ledColor(0, 255, 0); // Green
+  buzzPattern_TwoBeeps();
   showRunning();
   publishStatus("Running");
 }
@@ -364,10 +347,7 @@ void handleControlStop() {
   in_break = false;
   resetWaterAlarms();
   buzzerOff();
-
   beepOnce(400);
-
-  ledColor(255, 0, 0); // Red
   showStopped();
   publishStatus("Stopped");
 }
@@ -378,34 +358,27 @@ void handleControlReset() {
   in_break = false;
   resetWaterAlarms();
   buzzerOff();
-  // tetap simpan config yang sudah diterima (cfg_* tidak di-nol-kan)
   if (cfg_ready) {
-    ledColor(0, 255, 0);
     showConfigured();
     publishStatus("Ready");
   } else {
-    ledColor(0, 0, 255);
     showWaiting();
     publishStatus("Waiting for Config");
   }
 }
 
-/* ================== MQTT CALLBACK ================== */
+// MQTT Callback
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String msg;
   msg.reserve(length);
   for (unsigned int i = 0; i < length; ++i) msg += (char)payload[i];
 
-  // Debug
   Serial.print("[MQTT] "); Serial.print(topic); Serial.print(" = "); Serial.println(msg);
 
-  // CONFIG
   if (strncmp(topic, "swsc/config/", 12) == 0) {
     parseConfig(topic, msg);
     return;
   }
-
-  // CONTROL
   if (strcmp(topic, TPC_CONTROL_START) == 0) {
     handleControlStart(); return;
   }
@@ -415,8 +388,6 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   if (strcmp(topic, TPC_CONTROL_RESET) == 0) {
     handleControlReset(); return;
   }
-
-  // ALERT
   if (strcmp(topic, TPC_ALERT_BREAK) == 0) {
     handleAlertBreak(msg); return;
   }
@@ -425,16 +396,15 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
 }
 
-/* ================== SENSOR & PUBLISH ================== */
+// Sensor Reading & Publishing
 int readLightLux() {
-  // ADC 0..4095 → mapping sederhana ke "lux" pseudo (untuk tampilan)
-  int raw = analogRead(LDR_PIN);
-  // Normalisasi kasar (opsional sesuaikan dengan rangkaian):
-  // lux ~ (4095 - raw) * scale
-  int lux = (4095 - raw) / 2;  // angka "visual", bukan lux absolut
-  if (lux < 0)   lux = 0;
-  if (lux > 5000) lux = 5000;
-  return lux;
+  int state = digitalRead(LDR_PIN);
+
+  if (state == LOW) {
+    return 1; 
+  } else {
+    return 0;
+  }
 }
 
 void sampleAndPublishSensors() {
@@ -442,7 +412,6 @@ void sampleAndPublishSensors() {
   float h = dht.readHumidity();
   int   l = readLightLux();
 
-  // publish string aman (jika NaN, kirim "-")
   char buf[32];
 
   if (isnan(t)) mqtt.publish(TPC_DATA_TEMP, "-", false);
@@ -460,30 +429,25 @@ void sampleAndPublishSensors() {
   snprintf(buf, sizeof(buf), "%d", l);
   mqtt.publish(TPC_DATA_LIGHT, buf, false);
 
-  // Update OLED ringkas agar user lihat perubahan
   showEnv(t, h, l);
 }
 
-/* ================== SETUP & LOOP ================== */
+// Main Setup & Loop
 void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n\n=== SWSC - Smart Wellness & Study Companion ===");
-  Serial.println("Version: 2.2 (Sync, Retain, Robust)");
   Serial.println("===============================================\n");
 
-  // Pins
   pinMode(BUZZER_PIN, OUTPUT); digitalWrite(BUZZER_PIN, LOW);
   pinMode(LED_RED, OUTPUT);    digitalWrite(LED_RED, LOW);
   pinMode(LED_GREEN, OUTPUT);  digitalWrite(LED_GREEN, LOW);
   pinMode(LED_BLUE, OUTPUT);   digitalWrite(LED_BLUE, LOW);
   pinMode(LDR_PIN, INPUT);
 
-  // Sensors
   dht.begin();
   Serial.println("[INIT] DHT11 initialized");
 
-  // OLED
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) {
     Serial.println("[ERROR] OLED init failed!");
     while (1) { delay(1000); }
@@ -492,22 +456,16 @@ void setup() {
 
   showSplash();
   delay(1500);
-
-  // Network
+k
   setupWiFi();
-
-  // MQTT
   mqtt.setCallback(mqttCallback);
   connectMQTT();
 
-  // Setelah subscribe aktif, tampilkan waiting/ready
   if (!cfg_ready) {
     showWaiting();
-    ledColor(0, 0, 255);           // Blue
     publishStatus("Waiting for Config");
   } else {
     showConfigured();
-    ledColor(0, 255, 0);           // Green
     publishStatus("Ready");
   }
 
@@ -515,55 +473,50 @@ void setup() {
 }
 
 void loop() {
-  // Reconnect WiFi
   if (WiFi.status() != WL_CONNECTED) {
-    ledColor(255, 0, 0); // Red
     WiFi.reconnect();
     delay(500);
     return;
   }
 
-  // Reconnect MQTT
   if (!mqtt.connected()) {
     connectMQTT();
   }
   mqtt.loop();
 
-  // Sensor sampling & publish tiap ±2 detik
   unsigned long now = millis();
   if (now - lastSensorMs >= SENSOR_INTERVAL_MS) {
     lastSensorMs = now;
-    if (!session_stopped) { // <-- TAMBAHKAN KONDISI INI
+    if (!session_stopped) {
       sampleAndPublishSensors();
     }
   }
 
-  // Buzzer water alarms: jika ada alarm aktif, bunyikan periodik non-blocking
   bool anyWater = false;
   for (int i = 0; i < MAX_WATER_ALARMS; ++i) {
     if (water_active[i]) { anyWater = true; break; }
   }
-  if (anyWater) {
-    // bunyikan beep pendek setiap ~2.5 detik
-    if (now - lastBuzzMs >= 2500) {
-      lastBuzzMs = now;
-      beepOnce(100);
-    }
-  } else {
-    // pastikan buzzer mati bila tidak ada alarm
-    buzzerOff();
+
+  if (anyWater && (now - lastBuzzMs >= 2500)) { 
+    lastBuzzMs = now;
+    beepOnce(BUZZ_SHORT_MS);
   }
 
-  // Status LED ringkas berdasarkan state
-  if (!cfg_ready) {
-    ledColor(0, 0, 255); // Blue
-  } else if (session_stopped) { // <-- TAMBAHKAN BLOK INI
-    ledColor(255, 0, 0); // Red
-  } else if (!session_running) {
-    ledColor(0, 255, 0); // Green (siap)
+  if (now - lastBlinkMs >= 500) {
+    lastBlinkMs = now;
+    led_state = !led_state;
+  }
+
+  if (anyWater || session_stopped || in_break) {
+    if (led_state) ledColor(255, 0, 0);
+    else           ledColor(0, 0, 0); 
+  } else if (session_running) {
+    if (led_state) ledColor(0, 255, 0);
+    else           ledColor(0, 0, 0);
+  } else if (cfg_ready) {
+    if (led_state) ledColor(0, 0, 255); 
+    else           ledColor(0, 0, 0); 
   } else {
-    // running/break
-    if (in_break) ledColor(255, 255, 0); // Yellow saat break
-    else          ledColor(0, 255, 0); // Green saat running
+    ledColor(0, 0, 255);
   }
 }

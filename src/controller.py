@@ -1,21 +1,15 @@
-#!/usr/bin/env python3
-"""
-SWSC - Flask Backend with Robust MQTT (Fixed Disconnect Loop)
-"""
-
 import os
-import sys
 import time
 import threading
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import List, Dict, Optional
 
 from flask import Flask, jsonify, render_template, request
 import paho.mqtt.client as mqtt
 
-# ============== LOGGING SETUP ==============
+# Logging configuration
 logging.basicConfig(
     level=logging.INFO,
     format='[%(asctime)s] %(levelname)s - %(message)s',
@@ -23,17 +17,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ============== MQTT CONFIG (FIXED) ==============
+DEBUG_MODE = False
+
+# MQTT Configuration 
 MQTT_BROKER = "broker.hivemq.com"
 MQTT_PORT = 1883
-MQTT_KEEPALIVE = 30  # ← Dikurangi dari 60 ke 30 detik
+MQTT_KEEPALIVE = 30
 MQTT_RECONNECT_DELAY_MIN = 1
 MQTT_RECONNECT_DELAY_MAX = 30
-
-# Generate unique client ID with timestamp
 MQTT_CLIENT_ID = f"SWSC_Flask_{uuid.uuid4().hex[:8]}_{int(time.time())}"
 
-# Topics (unchanged)
+# MQTT Topics
 TOPIC_CONFIG_DURATION = "swsc/config/duration"
 TOPIC_CONFIG_BREAK_INTERVAL = "swsc/config/break_interval"
 TOPIC_CONFIG_BREAK_LENGTH = "swsc/config/break_length"
@@ -50,7 +44,7 @@ TOPIC_STATUS = "swsc/status/#"
 TOPIC_DATA = "swsc/data/#"
 TOPIC_ALERT = "swsc/alert/#"
 
-# ============== FLASK APP ==============
+# Flask App
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(
     __name__,
@@ -59,7 +53,7 @@ app = Flask(
     static_url_path=""
 )
 
-# ============== GLOBAL STATE ==============
+# Global State
 sensor_data_lock = threading.Lock()
 sensor_data = {
     "temperature": "-",
@@ -72,7 +66,7 @@ mqtt_client = None
 mqtt_connected = threading.Event()
 mqtt_connection_count = 0
 
-# ============== STUDY PLAN MODEL (UNCHANGED) ==============
+# Study Plan Computation
 @dataclass
 class StudyPlan:
     duration_min: int
@@ -113,7 +107,7 @@ def compute_plan(duration_min: int) -> StudyPlan:
         water_total_ml=total_ml
     )
 
-# ============== SCHEDULER (UNCHANGED) ==============
+# Scheduler Class
 class Scheduler:
     def __init__(self):
         self.lock = threading.Lock()
@@ -202,6 +196,7 @@ class Scheduler:
                     logger.info(f"Water milestone {idx} reached at {tsec}s")
                     self._water_fired[idx] = True
                     self._water_alarm_active[idx] = True
+                    self._last_water_buzz = now
                     mqtt_publish(TOPIC_ALERT_WATER, f"START:{idx}")
 
             self._buzz_water_if_needed(now)
@@ -237,7 +232,7 @@ class Scheduler:
                         self.phase_remaining_sec = min(self.plan.break_interval_min * 60, self.total_remaining_sec)
 
     def _buzz_water_if_needed(self, now: float):
-        if any(self._water_alarm_active.values()) and (now - self._last_water_buzz >= 5.0):
+        if any(self._water_alarm_active.values()) and (now - self._last_water_buzz >= 0.5):
             active_ids = [i for i, a in self._water_alarm_active.items() if a]
             mqtt_publish(TOPIC_ALERT_WATER, "PING:" + ",".join(map(str, active_ids)))
             self._last_water_buzz = now
@@ -267,17 +262,14 @@ class Scheduler:
 
 scheduler = Scheduler()
 
-# ============== MQTT FUNCTIONS (FIXED) ==============
-
+# MQTT Client and Callbacks
 def mqtt_publish(topic: str, payload: str, qos: int = 1, retain: bool = False):
-    """Publish with connection check and retry."""
     global mqtt_client
     
     if mqtt_client is None:
         logger.warning(f"MQTT client not initialized")
         return False
     
-    # Wait max 2 seconds for connection
     if not mqtt_connected.wait(timeout=2):
         logger.warning(f"MQTT not connected, cannot publish: {topic}")
         return False
@@ -295,15 +287,13 @@ def mqtt_publish(topic: str, payload: str, qos: int = 1, retain: bool = False):
         return False
 
 def on_connect(client, userdata, flags, rc):
-    """MQTT connection callback (FIXED)."""
     global mqtt_connection_count
     mqtt_connection_count += 1
     
     if rc == 0:
         logger.info(f"MQTT connected successfully (connection #{mqtt_connection_count})")
         mqtt_connected.set()
-        
-        # Subscribe to topics with error handling
+
         try:
             client.subscribe(TOPIC_STATUS, qos=1)
             client.subscribe(TOPIC_DATA, qos=1)
@@ -327,7 +317,6 @@ def on_connect(client, userdata, flags, rc):
         mqtt_connected.clear()
 
 def on_disconnect(client, userdata, rc):
-    """MQTT disconnection callback (FIXED)."""
     logger.warning(f"MQTT disconnected (rc={rc})")
     mqtt_connected.clear()
     
@@ -339,7 +328,6 @@ def on_disconnect(client, userdata, rc):
         logger.info(f"Unexpected disconnect (rc={rc}) - will auto-reconnect")
 
 def on_message(client, userdata, msg):
-    """MQTT message callback."""
     global sensor_data, system_status
     
     topic = msg.topic
@@ -361,7 +349,6 @@ def on_message(client, userdata, msg):
         logger.info(f"System status: {system_status}")
 
 def mqtt_loop():
-    """MQTT network loop with exponential backoff (FIXED)."""
     global mqtt_client
     
     logger.info("Starting MQTT thread...")
@@ -371,7 +358,6 @@ def mqtt_loop():
     
     while True:
         try:
-            # Create client with clean session
             mqtt_client = mqtt.Client(
                 client_id=MQTT_CLIENT_ID,
                 clean_session=True,
@@ -381,17 +367,11 @@ def mqtt_loop():
             mqtt_client.on_connect = on_connect
             mqtt_client.on_disconnect = on_disconnect
             mqtt_client.on_message = on_message
-            
-            # Configure socket timeout and keepalive
             mqtt_client._keepalive = MQTT_KEEPALIVE
             
             logger.info(f"Connecting to MQTT broker: {MQTT_BROKER}:{MQTT_PORT}")
             mqtt_client.connect(MQTT_BROKER, MQTT_PORT, MQTT_KEEPALIVE)
-            
-            # Reset retry delay on successful connection
             retry_delay = MQTT_RECONNECT_DELAY_MIN
-            
-            # This blocks and processes network traffic
             mqtt_client.loop_forever()
             
         except KeyboardInterrupt:
@@ -402,26 +382,23 @@ def mqtt_loop():
             logger.error(f"MQTT loop error: {e}")
             mqtt_connected.clear()
             
-            # Exponential backoff
             logger.info(f"Retrying in {retry_delay} seconds...")
             time.sleep(retry_delay)
             
             retry_delay = min(retry_delay * 2, MQTT_RECONNECT_DELAY_MAX)
 
 def tick_loop():
-    """Scheduler tick thread."""
     logger.info("Starting scheduler tick thread...")
     while True:
         try:
             scheduler.tick()
-            time.sleep(1)
+            time.sleep(0.1)
         except KeyboardInterrupt:
             break
         except Exception as e:
             logger.error(f"Tick loop error: {e}")
 
-# ============== FLASK ROUTES (UNCHANGED) ==============
-
+# Flask Routes
 @app.route("/")
 def index():
     with sensor_data_lock:
@@ -462,12 +439,10 @@ def route_start():
         plan = compute_plan(duration_min)
         scheduler.start(plan)
         
-        # Wait for MQTT connection before sending config
         if not mqtt_connected.wait(timeout=5):
             logger.error("Cannot start - MQTT not connected")
             return jsonify({"error": "MQTT not connected"}), 503
         
-        # Send configuration to ESP32
         mqtt_publish(TOPIC_CONFIG_DURATION, str(plan.duration_min), retain=True)
         time.sleep(0.1)
         mqtt_publish(TOPIC_CONFIG_BREAK_INTERVAL, str(plan.break_interval_min), retain=True)
@@ -477,7 +452,6 @@ def route_start():
         mqtt_publish(TOPIC_CONFIG_WATER_REMINDER, "on", retain=True)
         time.sleep(0.2)
         
-        # Send start command
         mqtt_publish(TOPIC_CONTROL_START, "START", qos=1)
         
         logger.info("Session start command sent")
@@ -536,7 +510,7 @@ def route_status():
             temp_str = sensor_data["temperature"]
             hum_str = sensor_data["humidity"]
             light_str = sensor_data["light"]
-        
+       
         try:
             t = float(temp_str)
             h = float(hum_str)
@@ -553,8 +527,8 @@ def route_status():
                 issues.append("Temperature")
             if h < 40 or h > 70:
                 issues.append("Humidity")
-            if l < 200 or l > 800:
-                issues.append("Light")
+            if l == 0.0:
+                issues.append("Light (Too Dark)")
             
             if len(issues) == 0:
                 condition = "Environment is ideal for studying"
@@ -574,21 +548,103 @@ def route_status():
     except Exception as e:
         logger.error(f"Error in /status: {e}")
         return jsonify({"error": str(e)}), 500
+    
+@app.route("/debug/start_test", methods=["POST"])
+def route_debug_start_test():
+    if not DEBUG_MODE:
+        logger.warning("Upaya mengakses endpoint DEBUG (start_test) yang dinonaktifkan.")
+        return jsonify({"error": "Debug mode is disabled"}), 404
 
-# ============== MAIN ==============
+    try:
+        logger.warning("!!! DEBUG: Memulai Sesi Tes 5 Menit...")
+        
+        plan = StudyPlan(
+            duration_min=5,
+            break_interval_min=3,
+            break_count=1,
+            break_length_min=1,
+            water_milestones=[60, 120, 180, 240, 300], 
+            water_amount_ml_per=50, 
+            water_total_ml=250
+        )
 
+        scheduler.start(plan)
+        
+        if not mqtt_connected.wait(timeout=2):
+            logger.error("Tidak dapat memulai tes - MQTT tidak terhubung")
+            return jsonify({"error": "MQTT not connected"}), 503
+        
+        mqtt_publish(TOPIC_CONFIG_DURATION, str(plan.duration_min), retain=True)
+        time.sleep(0.1)
+        mqtt_publish(TOPIC_CONFIG_BREAK_INTERVAL, str(plan.break_interval_min), retain=True)
+        time.sleep(0.1)
+        mqtt_publish(TOPIC_CONFIG_BREAK_LENGTH, str(plan.break_length_min), retain=True)
+        time.sleep(0.1)
+        mqtt_publish(TOPIC_CONFIG_WATER_REMINDER, "on", retain=True)
+        time.sleep(0.2)
+        
+        mqtt_publish(TOPIC_CONTROL_START, "START", qos=1)
+        logger.info("Perintah Mulai Sesi Tes terkirim")
+        return jsonify({"ok": True, "plan": asdict(plan)})
+
+    except Exception as e:
+        logger.error(f"Error in /debug/start_test: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/debug/trigger", methods=["POST"])
+def route_debug_trigger():
+    try:
+        if not DEBUG_MODE:
+            return jsonify({"error": "Debug mode is disabled"}), 403
+        
+        data = request.get_json(silent=True) or {}
+        event = data.get("event")
+        payload = data.get("payload", "")
+        
+        logger.warning(f"!!! DEBUG: Memicu event '{event}' -> '{payload}'")
+        
+        topic = None
+        
+        if event == "break_start":
+            topic = TOPIC_ALERT_BREAK
+            payload = "START"
+        elif event == "break_end":
+            topic = TOPIC_ALERT_BREAK
+            payload = "END"
+        elif event == "water_start":
+            topic = TOPIC_ALERT_WATER
+            payload = f"START:{payload or '0'}"
+        elif event == "water_stop":
+            topic = TOPIC_ALERT_WATER
+            payload = f"STOP:{payload or '0'}"
+        elif event == "force_stop":
+            topic = TOPIC_CONTROL_STOP
+            payload = "STOP"
+        elif event == "force_reset":
+            topic = TOPIC_CONTROL_RESET
+            payload = "RESET"
+        
+        if topic:
+            mqtt_publish(topic, payload, qos=1)
+            return jsonify({"ok": True, "topic": topic, "payload": payload})
+        else:
+            return jsonify({"error": "Unknown debug event"}), 400
+            
+    except Exception as e:
+        logger.error(f"Error in /debug/trigger: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Main Entry Point
 def main():
     logger.info("═" * 60)
     logger.info("SWSC - Smart Wellness & Study Companion")
     logger.info("Flask Backend v2.1 (Fixed Disconnect Loop)")
     logger.info("═" * 60)
     
-    # Start MQTT thread
     mqtt_thread = threading.Thread(target=mqtt_loop, daemon=True)
     mqtt_thread.start()
     logger.info("MQTT thread started")
     
-    # Wait for MQTT connection
     logger.info("Waiting for MQTT connection (max 15s)...")
     connected = mqtt_connected.wait(timeout=15)
     
@@ -598,7 +654,6 @@ def main():
         logger.warning("✗ MQTT connection timeout")
         logger.warning("  Will continue trying in background...")
     
-    # Start scheduler tick thread
     tick_thread = threading.Thread(target=tick_loop, daemon=True)
     tick_thread.start()
     logger.info("Scheduler thread started")
