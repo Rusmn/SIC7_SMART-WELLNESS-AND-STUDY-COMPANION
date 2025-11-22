@@ -27,13 +27,14 @@ venv\Scripts\activate      # Windows
 4. Install dependensi
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt --default-timeout=300
 ```
 
 5. Jalankan server Flask
 
 ```bash
-python src/controller.py
+cd src
+python main.py
 ```
 
 6. Akses di browser

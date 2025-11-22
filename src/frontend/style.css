@@ -9,6 +9,7 @@
   --btn: #e8edf4;
   --btn-sec: #d0d7e2;
   --shadow: rgba(0, 0, 0, 0.08);
+  --emo-card-bg: #fdf6e3; /* Warna latar khusus card emotion agar sedikit menonjol */
 }
 
 * {
@@ -37,10 +38,12 @@ html, body {
   color: #fff;
   font-weight: 600;
   box-shadow: 0 2px 10px var(--shadow);
+  z-index: 100;
 }
 
 .nav-item {
   opacity: 0.9;
+  white-space: nowrap;
 }
 
 .page {
@@ -56,6 +59,7 @@ html, body {
   justify-content: center;
   gap: 10px;
   margin-bottom: 24px;
+  flex-wrap: wrap;
 }
 
 .tab-btn {
@@ -80,7 +84,8 @@ html, body {
 }
 
 .panel {
-  width: 380px;
+  width: 100%;
+  max-width: 400px; /* Sedikit dilebarkan agar grid 2x2 muat nyaman */
   background: var(--panel);
   border-radius: 16px;
   box-shadow: 0 8px 24px var(--shadow);
@@ -99,6 +104,12 @@ html, body {
 
 .tab.active {
   display: block;
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .planner {
@@ -129,6 +140,7 @@ html, body {
   margin-top: 12px;
   font-size: 14px;
   color: var(--text-soft);
+  line-height: 1.5;
 }
 
 .plan-summary b {
@@ -147,6 +159,8 @@ html, body {
 .display-title {
   font-weight: 700;
   color: var(--text-soft);
+  font-size: 0.9rem;
+  letter-spacing: 0.5px;
 }
 
 .display-time {
@@ -154,12 +168,13 @@ html, body {
   font-weight: 800;
   color: var(--accent);
   margin: 12px 0;
+  font-variant-numeric: tabular-nums; /* Agar angka tidak geser saat detik berubah */
 }
 
 .sub-display {
   font-size: 14px;
   color: var(--text-soft);
-  margin-bottom: 10px;
+  margin-bottom: 16px;
 }
 
 .display-actions {
@@ -212,6 +227,8 @@ html, body {
 .water-item.active {
   background: #e3f2fd;
   border-color: var(--accent-light);
+  transform: scale(1.02);
+  box-shadow: 0 4px 8px rgba(30, 75, 138, 0.1);
 }
 
 .water-left {
@@ -236,34 +253,54 @@ html, body {
 .water-check {
   font-size: 13px;
   color: var(--text-soft);
+  cursor: pointer;
 }
 
+/* --- MONITORING GRID UPDATE --- */
 .monitor-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  grid-template-columns: repeat(2, 1fr); 
+  gap: 12px;
 }
 
 .monitor-card {
   background: #fff;
   border-radius: 10px;
-  padding: 12px;
+  padding: 14px;
   text-align: center;
   box-shadow: 0 2px 5px rgba(0,0,0,0.05); 
   border: 1px solid #e2e7f1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Highlight Card Emotion */
+.monitor-card:last-child {
+  background-color: var(--emo-card-bg);
+  border-color: #e6dbb9;
 }
 
 .monitor-title {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-soft);
+  text-transform: uppercase;
+  font-weight: 600;
+  margin-bottom: 4px;
 }
 
 .monitor-value {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
   color: var(--accent);
 }
 
+#mon-emotion {
+  color: #d35400;
+}
+
+/* --- SUMMARY CARD --- */
 .monitor-summary-card {
   background: #fff;
   border-radius: 10px;
@@ -272,17 +309,20 @@ html, body {
   box-shadow: 0 1px 3px rgba(0,0,0,0.05);
   margin-top: 16px;
   border: 2px solid #eee;
+  transition: 0.3s;
 }
 
 .monitor-summary-card .monitor-title {
   font-size: 14px;
   color: var(--text-soft);
+  text-transform: none;
 }
 
 .monitor-summary-card .monitor-value {
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
   margin-top: 4px;
+  color: inherit;
 }
 
 .monitor-summary-card.good {
@@ -300,11 +340,12 @@ html, body {
 .monitor-summary-card.unknown {
   background-color: #f4f4f4;
   border-color: #ddd;
+  color: var(--text-soft);
 }
 
 .muted {
   text-align: center;
-  margin-top: 10px;
+  margin-top: 12px;
   font-size: 12px;
   color: var(--text-soft);
 }
@@ -313,51 +354,18 @@ html, body {
   font-size: 13px;
   color: var(--text-soft);
   text-align: center;
+  padding: 20px 0;
 }
 
-.debug-panel h3 {
-  text-align: center;
-  margin-top: 0;
-}
-
-.debug-panel .hint {
-  font-size: 13px;
-  color: var(--text-soft);
-  text-align: center;
-  margin-bottom: 20px;
-}
-
-.debug-group {
-  margin-bottom: 15px;
-  border-top: 1px solid #eee;
-  padding-top: 10px;
-}
-
-.debug-group h4 {
-  margin-top: 0;
-  margin-bottom: 8px;
-}
-
-.btn-debug {
-  background-color: #fdeaea;
-  border-color: #f3b6b6;
-  color: #8c2e2e;
-  width: 100%;
-  margin-bottom: 6px;
-}
-
-.btn-debug:hover {
-  background-color: #ebcaca;
-  color: #8c2e2e;
-}
-
-.btn-debug-start {
-  background-color: #d9f3d9;
-  border-color: #a0d9a0;
-  color: #2b612b !important;
-  font-weight: 600;
-}
-
-.btn-debug-start:hover {
-  background-color: #c8ebc8;
+@media (max-width: 400px) {
+  .panel {
+    width: 100%;
+    padding: 16px;
+  }
+  .monitor-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .display-time {
+    font-size: 42px;
+  }
 }

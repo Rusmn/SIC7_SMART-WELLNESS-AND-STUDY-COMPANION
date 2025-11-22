@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SWSC – Study Assistant</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="/frontend/style.css" rel="stylesheet" />
+  </head>
+  <body>
+    <nav class="navbar">
+      <div class="nav-item">Temp: <span id="nav-temp">{{ temp }}</span> °C</div>
+      <div class="nav-item">Humidity: <span id="nav-hum">{{ hum }}</span> %</div>
+      <div class="nav-item">Light: <span id="nav-light">{{ light }}</span></div>
+      <div class="nav-item">Status: <span id="nav-status">{{ status }}</span></div>
+    </nav>
+
+    <main class="page">
+      <section class="tabs">
+        <button class="tab-btn active" data-tab="tab-countdown">Countdown</button>
+        <button class="tab-btn" data-tab="tab-water">Ceklis Air</button>
+        <button class="tab-btn" data-tab="tab-monitor">Monitoring</button>
+      </section>
+
+      <section id="tab-countdown" class="panel tab active">
+        <div class="planner">
+          <label for="durationInput">Total Study Duration (minutes)</label>
+          <div class="planner-row">
+            <input id="durationInput" type="number" min="1" value="60" />
+            <button id="btn-calc" class="btn">Calculate</button>
+          </div>
+          <div class="plan-summary" id="planSummary">
+            <div>Break interval: <b id="plan-interval">-</b> min</div>
+            <div>Total breaks: <b id="plan-count">-</b> times</div>
+            <div>Each break: <b id="plan-length">-</b> min</div>
+            <div>Water milestones: <b id="plan-water-count">-</b> times</div>
+            <div>Water per milestone: <b id="plan-water-per">-</b> ml</div>
+            <div>Total water: <b id="plan-water-total">-</b> ml</div>
+          </div>
+        </div>
+
+        <div class="display">
+          <div class="display-title" id="phase-label">SESSION</div>
+          <div class="display-time" id="phase-time">00:00</div>
+          <div class="sub-display">
+            <span class="sub-label">Total remaining</span>
+            <span class="sub-time" id="total-time">00:00</span>
+          </div>
+          <div class="display-actions">
+            <button id="btn-start" class="btn">Start</button>
+            <button id="btn-stop" class="btn btn-secondary">Stop</button>
+            <button id="btn-reset" class="btn btn-secondary">Reset</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-water" class="panel tab">
+        <div class="water-list" id="water-list">
+          <div class="hint">
+            Belum ada plan. Hitung dulu di tab Countdown, lalu tekan Start.
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-monitor" class="panel tab">
+        <div class="monitor-grid">
+          <div class="monitor-card">
+            <div class="monitor-title">Temperature</div>
+            <div class="monitor-value"><span id="mon-temp">{{ temp }}</span> °C</div>
+          </div>
+          <div class="monitor-card">
+            <div class="monitor-title">Humidity</div>
+            <div class="monitor-value"><span id="mon-hum">{{ hum }}</span> %</div>
+          </div>
+          <div class="monitor-card">
+            <div class="monitor-title">Light</div>
+            <div class="monitor-value"><span id="mon-light">{{ light }}</span></div>
+          </div>
+          
+          <div class="monitor-card">
+            <div class="monitor-title">AI Emotion</div>
+            <div class="monitor-value" id="mon-emotion" style="text-transform: capitalize;">-</div>
+            <div style="font-size: 0.8rem; color: #ccc; margin-top:5px;">
+                Conf: <span id="mon-emo-score">0</span>%
+            </div>
+          </div>
+
+        </div>
+        <div class="monitor-summary-card" id="mon-summary-card">
+          <div class="monitor-title">Kesimpulan Kondisi</div>
+          <div class="monitor-value" id="mon-summary-text">Memuat...</div>
+        </div>
+        <div class="muted">Data diperbarui setiap ±1 detik atau saat ada pesan IoT.</div>
+      </section>
+    </main>
+
+    <script src="/frontend/script.js"></script>
+  </body>
+</html>
