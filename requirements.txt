@@ -14,3 +14,5 @@ scikit-learn==1.5.2
 pandas==2.2.3
 # Optional for best accuracy (enable if you choose --model xgb)
 xgboost==2.1.2
+streamlit==1.38.0
+requests==2.32.3
