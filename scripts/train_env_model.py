@@ -1,14 +1,3 @@
-"""
-Training script for environmental condition classifier.
-
-Usage:
-    python scripts/train_env_model.py --input data/raw/environment.csv --output models/environment.pkl --model rf
-    python scripts/train_env_model.py --model extratrees
-    python scripts/train_env_model.py --model xgb   # requires xgboost installed
-
-Expected CSV columns: temperature, humidity, light, label
-"""
-
 import argparse
 from pathlib import Path
 from typing import Callable, Dict
