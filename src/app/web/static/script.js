@@ -30,10 +30,10 @@ async function calcPlan() {
     document.getElementById("plan-count").textContent = p.break_count;
     document.getElementById("plan-length").textContent = p.break_length_min;
     document.getElementById("plan-water-count").textContent = p.water_milestones.length;
-    document.getElementById("plan-water-per").textContent = p.water_amount_ml_per;
+    document.getElementById("plan-water-per").textContent = p.water_ml;
     document.getElementById("plan-water-total").textContent = p.water_total_ml;
     
-    renderWaterList(p.water_milestones, p.water_amount_ml_per);
+    renderWaterList(p.water_milestones, p.water_ml);
     return p;
 }
 
@@ -138,23 +138,18 @@ async function refreshState() {
         const summaryCard = document.getElementById("mon-summary-card");
         const summaryText = document.getElementById("mon-summary-text");
         const navbar = document.querySelector(".navbar");
-        
-        let issues = [];
-        let t = parseFloat(sensor.temperature);
-        let h = parseFloat(sensor.humidity);
-        
-        if (t < 20 || t > 30) issues.push("Suhu");
-        if (h < 40 || h > 70) issues.push("Lembab");
-        if (sensor.light === "0") issues.push("Gelap");
+        const env = d.env_prediction || { label: "Model not ready", confidence: 0 };
+        summaryText.textContent = `${env.label} (${Math.round(env.confidence * 100)}%)`;
 
-        if (issues.length > 0) {
+        if (d.alert_level === "good") {
+            navbar.style.background = "rgba(0,128,0,0.4)";
+            summaryCard.className = "monitor-summary-card good";
+        } else if (d.alert_level === "bad") {
             navbar.style.background = "rgba(200,0,0,0.6)";
-            summaryText.textContent = "Cek: " + issues.join(", ");
             summaryCard.className = "monitor-summary-card bad";
         } else {
-            navbar.style.background = "rgba(0,128,0,0.4)";
-            summaryText.textContent = "Ideal";
-            summaryCard.className = "monitor-summary-card good";
+            navbar.style.background = "rgba(30, 75, 138, 0.9)";
+            summaryCard.className = "monitor-summary-card unknown";
         }
 
     } catch (e) {

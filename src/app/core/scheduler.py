@@ -1,17 +1,13 @@
-import time
-import threading
 import logging
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Optional
+import threading
+import time
+from dataclasses import dataclass
+from typing import Dict, List, Optional
+
+from app.core.mqtt import TOPIC_ALERT_BREAK, TOPIC_ALERT_WATER, TOPIC_CONTROL_STOP
 
 # Gunakan logger uvicorn agar tampil di konsol FastAPI
 logger = logging.getLogger("uvicorn")
-
-from services.mqtt import (
-    TOPIC_CONTROL_STOP,
-    TOPIC_ALERT_BREAK,
-    TOPIC_ALERT_WATER
-)
 
 @dataclass
 class StudyPlan:
@@ -20,7 +16,7 @@ class StudyPlan:
     break_count: int
     break_length_min: int
     water_milestones: List[int]
-    water_amount_ml_per: int
+    water_ml: int
     water_total_ml: int
 
 def compute_plan(duration_min: int) -> StudyPlan:
@@ -49,7 +45,7 @@ def compute_plan(duration_min: int) -> StudyPlan:
         break_count=bcount,
         break_length_min=blen,
         water_milestones=water_milestones,
-        water_amount_ml_per=per_ml,
+        water_ml=per_ml,
         water_total_ml=total_ml
     )
 
@@ -195,7 +191,7 @@ class Scheduler:
                     "break_interval_min": self.plan.break_interval_min,
                     "break_count": self.plan.break_count,
                     "break_length_min": self.plan.break_length_min,
-                    "water_amount_ml_per": self.plan.water_amount_ml_per,
+                    "water_ml": self.plan.water_ml,
                     "water_total_ml": self.plan.water_total_ml,
                     "water_milestones": self.plan.water_milestones
                 }

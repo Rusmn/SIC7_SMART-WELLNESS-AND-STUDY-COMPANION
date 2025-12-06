@@ -43,6 +43,20 @@ python main.py
 http://127.0.0.1:5000
 ```
 
+## Pipeline AI/ML Lingkungan (baru)
+
+- **Data**: kumpulkan CSV minimal 150 baris dari sensor (`temperature, humidity, light, label`) ke `data/raw/environment.csv`.
+- **Training**: jalankan `python scripts/train_env_model.py --input data/raw/environment.csv --output models/environment.pkl`.
+- **Serving**: backend otomatis memuat model dari `models/environment.pkl` (atau melatih model sintetis fallback jika belum ada) lalu mengirim label & confidence ke dashboard dan MQTT alert.
+
+Struktur tambahan:
+```
+data/raw/              # simpan dataset mentah
+data/processed/        # opsional untuk dataset hasil bersih
+models/environment.pkl # hasil training classifier lingkungan
+scripts/train_env_model.py
+```
+
 ## Kontributor
 
 |          Nama          |
