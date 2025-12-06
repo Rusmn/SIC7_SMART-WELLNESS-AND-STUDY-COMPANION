@@ -2,8 +2,6 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 from app.api.routes import router
 from app.core.environment_classifier import EnvironmentClassifier
@@ -15,21 +13,15 @@ from app.lifecycle import register_events
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(message)s')
 logger = logging.getLogger("main")
 
-WEB_DIR = Path(__file__).resolve().parent / "web"
-
 
 def create_app() -> FastAPI:
-    app = FastAPI()
-
-    static_dir = WEB_DIR / "static"
-    templates_dir = WEB_DIR / "templates"
-
-    app.mount("/frontend", StaticFiles(directory=static_dir), name="frontend")
-    app.state.templates = Jinja2Templates(directory=templates_dir)
+    app = FastAPI(title="SWSC API", docs_url="/docs", redoc_url=None)
 
     mqtt_service = MQTTService()
     scheduler = Scheduler(mqtt_service)
-    env_classifier = EnvironmentClassifier(model_path=Path(__file__).resolve().parent.parent / "models" / "environment.pkl")
+    env_classifier = EnvironmentClassifier(
+        model_path=Path(__file__).resolve().parent.parent / "models" / "environment.pkl"
+    )
 
     app.state.mqtt = mqtt_service
     app.state.scheduler = scheduler
@@ -40,6 +32,8 @@ def create_app() -> FastAPI:
         "score": 0.0,
         "timestamp": 0,
     }
+    app.state.emotion_history = []  # List of emotion records during session
+    app.state.session_start_time = 0  # Track when session starts
     app.state.is_model_loading = True
 
     app.include_router(router)
@@ -48,4 +42,4 @@ def create_app() -> FastAPI:
     return app
 
 
-__all__ = ["create_app", "WEB_DIR"]
+__all__ = ["create_app"]

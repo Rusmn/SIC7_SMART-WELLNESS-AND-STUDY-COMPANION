@@ -1,8 +1,13 @@
+import csv
+import io
 import logging
 import time
+from collections import Counter
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.responses import StreamingResponse
 
 from app.api.models import AckRequest, PlanRequest
 from app.core import scheduler as scheduler_module
@@ -27,19 +32,8 @@ logger = logging.getLogger("main")
 
 
 @router.get("/")
-def index(request: Request):
-    mqtt: MQTTService = request.app.state.mqtt
-    templates = request.app.state.templates
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
-            "temp": mqtt.sensor_data["temperature"],
-            "hum": mqtt.sensor_data["humidity"],
-            "light": mqtt.sensor_data["light"],
-            "status": mqtt.system_status,
-        },
-    )
+def index():
+    return {"message": "SWSC API is running. Use /status or the Streamlit dashboard."}
 
 
 @router.post("/plan")
@@ -54,6 +48,10 @@ def start(req: PlanRequest, request: Request):
 
     plan = scheduler_module.compute_plan(req.duration_min)
     scheduler.start(plan)
+
+    # Reset emotion history for new session and mark start time
+    request.app.state.emotion_history = []
+    request.app.state.session_start_time = time.time()
 
     if not mqtt.connected_event.is_set():
         raise HTTPException(status_code=503, detail="MQTT not connected")
@@ -94,7 +92,7 @@ def reset(request: Request):
 @router.post("/water_ack")
 def ack_water(req: AckRequest, request: Request):
     scheduler: Scheduler = request.app.state.scheduler
-    scheduler.ack_water(req.milestone_id)
+    scheduler.water_ack(req.milestone_id)
     return {"ok": True}
 
 
@@ -126,11 +124,111 @@ def get_status(request: Request):
     }
 
 
+@router.get("/emotion/summary")
+def get_emotion_summary(request: Request):
+    """Get emotion statistics from the current/last session."""
+    history = request.app.state.emotion_history
+    session_start = request.app.state.session_start_time
+
+    if not history:
+        return {
+            "total_records": 0,
+            "most_frequent": None,
+            "emotion_counts": {},
+            "emotion_percentages": {},
+            "average_confidence": 0.0,
+        }
+
+    # Filter only emotions from current session (if session_start is set)
+    if session_start > 0:
+        history = [r for r in history if r["timestamp"] >= session_start]
+
+    if not history:
+        return {
+            "total_records": 0,
+            "most_frequent": None,
+            "emotion_counts": {},
+            "emotion_percentages": {},
+            "average_confidence": 0.0,
+        }
+
+    # Count emotions
+    emotion_labels = [record["label"] for record in history]
+    emotion_counts = Counter(emotion_labels)
+    total = len(emotion_labels)
+
+    # Calculate percentages
+    emotion_percentages = {
+        label: round((count / total) * 100, 2)
+        for label, count in emotion_counts.items()
+    }
+
+    # Most frequent emotion
+    most_frequent = emotion_counts.most_common(1)[0] if emotion_counts else (None, 0)
+
+    # Average confidence
+    avg_confidence = sum(record["score"] for record in history) / total if total > 0 else 0.0
+
+    return {
+        "total_records": total,
+        "most_frequent": {
+            "label": most_frequent[0],
+            "count": most_frequent[1],
+            "percentage": emotion_percentages.get(most_frequent[0], 0.0),
+        },
+        "emotion_counts": dict(emotion_counts),
+        "emotion_percentages": emotion_percentages,
+        "average_confidence": round(avg_confidence, 4),
+    }
+
+
+@router.get("/emotion/export")
+def export_emotion_csv(request: Request):
+    """Export emotion history as CSV file."""
+    history = request.app.state.emotion_history
+    session_start = request.app.state.session_start_time
+
+    # Filter only emotions from current session
+    if session_start > 0:
+        history = [r for r in history if r["timestamp"] >= session_start]
+
+    if not history:
+        raise HTTPException(status_code=404, detail="No emotion data to export")
+
+    # Create CSV in memory
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Write header
+    writer.writerow(["Timestamp", "DateTime", "Emotion", "Confidence", "Confidence %"])
+
+    # Write data
+    for record in history:
+        timestamp = record["timestamp"]
+        dt = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+        label = record["label"]
+        score = record["score"]
+        score_pct = f"{score * 100:.2f}%"
+
+        writer.writerow([timestamp, dt, label, score, score_pct])
+
+    # Prepare response
+    output.seek(0)
+    filename = f"emotion_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
 @router.post("/camera/analyze")
 async def camera_analyze(request: Request, file: UploadFile = File(...)):
     latest_emotion = request.app.state.latest_emotion
     mqtt: MQTTService = request.app.state.mqtt
     emotion: Optional[EmotionEngine] = request.app.state.emotion
+    scheduler: Scheduler = request.app.state.scheduler
 
     try:
         if emotion is None:
@@ -140,19 +238,28 @@ async def camera_analyze(request: Request, file: UploadFile = File(...)):
         label, score = emotion.predict(img)
 
         if label:
+            timestamp = time.time()
             latest_emotion = {
                 "label": label,
                 "score": float(score),
-                "timestamp": time.time(),
+                "timestamp": timestamp,
             }
             request.app.state.latest_emotion = latest_emotion
+
+            # Save to history if session is running
+            if scheduler.running:
+                request.app.state.emotion_history.append({
+                    "label": label,
+                    "score": float(score),
+                    "timestamp": timestamp,
+                })
 
         action = "NONE"
         if label in ["sad", "angry", "fear", "disgust"] and score > 0.5:
             mqtt.publish(TOPIC_ALERT_BREAK, "START")
             action = "TRIGGER_BREAK"
 
-        return {"emotion": label, "score": score, "action": action}
+        return {"emotion": latest_emotion, "action": action}
     except Exception as exc:  # noqa: BLE001
         logger.error(f"Camera analyze error: {exc}")
         return {"error": str(exc)}
