@@ -12,12 +12,20 @@ logger = logging.getLogger("main")
 
 def _tick_loop(app: FastAPI) -> None:
     scheduler = app.state.scheduler
+    interval = 0.1  # 10 Hz tick keeps CPU low but feels realtime enough for scheduler updates
+    next_tick = time.monotonic()
     while True:
         try:
             scheduler.tick()
-            time.sleep(0.1)
         except Exception as exc:  # noqa: BLE001
             logger.error(f"Tick loop error: {exc}")
+        next_tick += interval
+        sleep_for = max(0.0, next_tick - time.monotonic())
+        if sleep_for:
+            time.sleep(sleep_for)
+        else:
+            # If tick runs long, realign to current time to avoid runaway loop
+            next_tick = time.monotonic()
 
 
 def _load_model_background(app: FastAPI) -> None:
