@@ -21,7 +21,7 @@ cd SIC7_SMART-WELLNESS-AND-STUDY-COMPANION
 ```bash
 python -m venv venv
 source venv/bin/activate   # Linux / macOS
-venv\Scripts\activate      # Windows
+venv/Scripts/activate      # Windows
 ```
 
 4. Install dependensi
