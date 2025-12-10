@@ -11,9 +11,6 @@ from sklearn.preprocessing import StandardScaler
 logger = logging.getLogger("uvicorn")
 
 
-DEFAULT_LABELS = ["nyaman", "panas_kering", "lembap", "gelap"]
-
-
 class EnvironmentClassifier:
     """
     Wrapper for sensor-based classifier.
