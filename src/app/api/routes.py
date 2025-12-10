@@ -1,15 +1,17 @@
 import csv
 import io
+import asyncio
+import json
 import logging
 import time
 from collections import Counter
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, WebSocket
 from fastapi.responses import StreamingResponse
 
-from app.api.models import AckRequest, PlanRequest
+from app.api.models import AckRequest, ClothingRequest, PlanRequest
 from app.core import scheduler as scheduler_module
 from app.core.emotion import EmotionEngine
 from app.core.environment_classifier import EnvironmentClassifier
@@ -29,6 +31,80 @@ from app.core.scheduler import Scheduler
 
 router = APIRouter()
 logger = logging.getLogger("main")
+
+
+def _build_status_payload(
+    app_state,
+    simulate: bool = False,
+    temp: Optional[float] = None,
+    hum: Optional[float] = None,
+    clothing_insulation: Optional[float] = None,
+    light: Optional[float] = None,
+):
+    scheduler: Scheduler = app_state.scheduler
+    mqtt: MQTTService = app_state.mqtt
+    latest_emotion = app_state.latest_emotion
+    env_classifier: EnvironmentClassifier = app_state.env_classifier
+    clothing_state = app_state.clothing
+
+    if simulate:
+        data = {
+            "temperature": temp if temp is not None else 25.0,
+            "humidity": hum if hum is not None else 60.0,
+            "light": light if light is not None else 150.0,
+        }
+        mqtt_connected = False
+    else:
+        data = mqtt.sensor_data
+        mqtt_connected = mqtt.connected_event.is_set()
+
+    try:
+        light_value = float(data.get("light", 0) or 0)
+    except Exception:
+        light_value = 0.0
+
+    clothing_value = clothing_insulation
+    if clothing_value is None:
+        clothing_value = float(clothing_state.get("insulation", 1.0))
+
+    clothing_info = clothing_state.copy()
+    if simulate:
+        clothing_info = {
+            "insulation": clothing_value,
+            "source": "simulate",
+            "updated_at": time.time(),
+        }
+
+    if light_value == 0.0:
+        cond = "gelap"
+        conf = 1.0
+        alert = "tidak_ideal"
+    else:
+        label, conf = env_classifier.predict(data, clothing_value)
+        if label:
+            cond = str(label)
+            good_labels = {"nyaman", "aman", "ideal", "normal"}
+            if cond.lower() in good_labels and conf >= 0.6:
+                alert = "ideal"
+            elif cond.lower() in good_labels and conf >= 0.3:
+                alert = "kurang_ideal"
+            else:
+                alert = "tidak_ideal"
+        else:
+            cond = "Model not ready"
+            alert = "tidak_ideal"
+
+    return {
+        "sensor": data,
+        "status": cond,
+        "alert_level": alert,
+        "scheduler": scheduler.snapshot(),
+        "emotion": latest_emotion,
+        "env_prediction": {"label": cond, "confidence": conf},
+        "mqtt_connected": mqtt_connected,
+        "clothing": clothing_info,
+        "simulate": simulate,
+    }
 
 
 @router.get("/")
@@ -97,31 +173,73 @@ def ack_water(req: AckRequest, request: Request):
 
 
 @router.get("/status")
-def get_status(request: Request):
-    scheduler: Scheduler = request.app.state.scheduler
-    mqtt: MQTTService = request.app.state.mqtt
-    latest_emotion = request.app.state.latest_emotion
-    env_classifier: EnvironmentClassifier = request.app.state.env_classifier
+def get_status(
+    request: Request,
+    simulate: bool = Query(False, description="Gunakan data simulasi, bukan MQTT"),
+    temp: Optional[float] = Query(None, alias="temperature"),
+    hum: Optional[float] = Query(None, alias="humidity"),
+    clothing_insulation: Optional[float] = Query(None),
+    light: Optional[float] = Query(None),
+):
+    return _build_status_payload(request.app.state, simulate, temp, hum, clothing_insulation, light)
 
-    data = mqtt.sensor_data
-    label, conf = env_classifier.predict(data)
-    if label:
-        cond = label
-        good_labels = {"nyaman", "aman", "ideal", "normal"}
-        alert = "good" if label.lower() in good_labels and conf >= 0.5 else "bad"
-    else:
-        cond = "Model not ready"
-        alert = "unknown"
 
-    return {
-        "sensor": data,
-        "status": cond,
-        "alert_level": alert,
-        "scheduler": scheduler.snapshot(),
-        "emotion": latest_emotion,
-        "env_prediction": {"label": cond, "confidence": conf},
-        "mqtt_connected": mqtt.connected_event.is_set(),
-    }
+@router.post("/clothing")
+def set_clothing(req: ClothingRequest, request: Request):
+    clothing_state = request.app.state.clothing
+    clothing_state["insulation"] = float(req.insulation)
+    clothing_state["source"] = "manual"
+    clothing_state["updated_at"] = time.time()
+    return {"ok": True, "clothing": clothing_state}
+
+
+@router.get("/clothing")
+def get_clothing(request: Request):
+    return request.app.state.clothing
+
+
+@router.websocket("/ws/status")
+async def ws_status(
+    websocket: WebSocket,
+    simulate: bool = False,
+    temperature: Optional[float] = None,
+    humidity: Optional[float] = None,
+    clothing_insulation: Optional[float] = None,
+    light: Optional[float] = None,
+):
+    await websocket.accept()
+    try:
+        while True:
+            payload = _build_status_payload(
+                app_state=websocket.app.state,
+                simulate=simulate,
+                temp=temperature,
+                hum=humidity,
+                clothing_insulation=clothing_insulation,
+                light=light,
+            )
+            await websocket.send_text(json.dumps(payload))
+            await asyncio.sleep(1)
+    except Exception:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@router.websocket("/ws/emotion")
+async def ws_emotion(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            latest = websocket.app.state.latest_emotion  # type: ignore[attr-defined]
+            await websocket.send_text(json.dumps(latest))
+            await asyncio.sleep(1)
+    except Exception:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @router.get("/emotion/summary")
