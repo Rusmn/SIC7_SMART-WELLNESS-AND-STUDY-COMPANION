@@ -42,15 +42,15 @@ def labeling_sni_3_kelas(row):
     tol_max = 27.1 + shift
 
     if temp < tol_min or temp > tol_max:
-        return "Tidak Nyaman"
+        return "Tidak Ideal"
     
     if opt_min <= temp <= opt_max:
         if is_humidity_ideal:
-            return "Nyaman"
+            return "Ideal"
         else:
-            return "Kurang Nyaman"
+            return "Kurang Ideal"
     else:
-        return "Kurang Nyaman"
+        return "Kurang Ideal"
 
 print("Memproses labeling SNI...")
 df['Label_Prediksi'] = df.apply(labeling_sni_3_kelas, axis=1)
