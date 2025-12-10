@@ -29,11 +29,11 @@ DEFAULT_MODEL_PATH = ROOT_DIR / "src" / "models" / "environment.pkl"
 
 def load_dataset(path: Path) -> tuple[np.ndarray, np.ndarray]:
     df = pd.read_csv(path)
-    required = {"temperature", "humidity", "light", "label"}
+    required = {"temperature", "humidity", "clothing_insulation", "label"}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"Missing columns in dataset: {missing}")
-    X = df[["temperature", "humidity", "light"]].to_numpy()
+    X = df[["temperature", "humidity", "clothing_insulation"]].to_numpy()
     y = df["label"].astype(str).to_numpy()
     return X, y
 
@@ -128,7 +128,9 @@ def train_environment_model(input_path: Path, output_path: Path, model_name: str
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train environment classifier.")
+    parser = argparse.ArgumentParser(
+        description="Train environment classifier (features: temperature, humidity, clothing_insulation)."
+    )
     parser.add_argument(
         "--input",
         type=Path,

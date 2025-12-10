@@ -7,3 +7,7 @@ class PlanRequest(BaseModel):
 
 class AckRequest(BaseModel):
     milestone_id: int
+
+
+class ClothingRequest(BaseModel):
+    insulation: int

@@ -35,6 +35,11 @@ def create_app() -> FastAPI:
     app.state.emotion_history = []  # List of emotion records during session
     app.state.session_start_time = 0  # Track when session starts
     app.state.is_model_loading = True
+    app.state.clothing = {
+        "insulation": 1.0,  # 0=tipis, 1=sedang, 2=tebal
+        "source": "default",
+        "updated_at": 0.0,
+    }
 
     app.include_router(router)
     register_events(app)

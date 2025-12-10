@@ -91,12 +91,21 @@ class Scheduler:
                 return
             logger.info("Stopping session...")
             self.running = False
+            self.phase = "session"
+            self.phase_remaining_sec = 0
+            self.total_remaining_sec = 0
             self._start_epoch = None
             self._last_tick = None
             for i, active in list(self._water_alarm_active.items()):
                 if active:
                     self.mqtt.publish(TOPIC_ALERT_WATER, f"STOP:{i}")
                     self._water_alarm_active[i] = False
+            self._water_alarm_active.clear()
+            self._water_fired.clear()
+            try:
+                self.mqtt.publish(TOPIC_CONTROL_STOP, "STOP", qos=1)
+            except Exception:
+                pass
             logger.info("Session stopped")
 
     def reset(self):
