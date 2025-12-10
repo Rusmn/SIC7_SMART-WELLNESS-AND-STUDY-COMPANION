@@ -25,7 +25,7 @@ def labeling_sni_3_kelas(row):
     clothing = row['Pakaian']
 
     if hum < 30 or hum > 70:
-        return "Tidak Nyaman"
+        return "Tidak Ideal"
     
     is_humidity_ideal = (40 <= hum <= 60)
 
