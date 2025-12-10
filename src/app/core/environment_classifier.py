@@ -10,12 +10,12 @@ from sklearn.preprocessing import StandardScaler
 
 logger = logging.getLogger("uvicorn")
 
-
 class EnvironmentClassifier:
-    """
-    Wrapper untuk klasifikasi kondisi lingkungan berbasis suhu, kelembapan, dan pakaian.
-    Jika model tidak ada, akan melatih model sintetis sederhana (tanpa perlu dataset eksternal).
-    """
+    CLOTHING_MAP = {
+        'tipis': 0,
+        'sedang': 1,
+        'tebal': 2
+    }
 
     def __init__(self, model_path: Path):
         self.model_path = model_path
@@ -23,11 +23,14 @@ class EnvironmentClassifier:
 
     def load_or_train(self) -> None:
         if self.model_path.exists():
-            self.pipeline = joblib.load(self.model_path)
-            logger.info(f"Environment model loaded from {self.model_path}")
-            return
+            try:
+                self.pipeline = joblib.load(self.model_path)
+                logger.info(f"Environment model loaded from {self.model_path}")
+                return
+            except Exception as e:
+                logger.warning(f"Failed to load existing model: {e}. Retraining...")
 
-        logger.warning("Environment model not found. Training fallback synthetic model...")
+        logger.warning("Environment model not found or invalid. Training fallback synthetic model...")
         self.pipeline = self._train_synthetic()
         self.save()
         logger.info("Fallback environment model trained and saved.")
@@ -39,19 +42,20 @@ class EnvironmentClassifier:
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(self.pipeline, self.model_path)
 
-    def predict(self, sensor_data: Dict[str, str], clothing_insulation: float = 1.0) -> Tuple[Optional[str], float]:
+    def predict(self, sensor_data: Dict[str, str]) -> Tuple[Optional[str], float]:
         if self.pipeline is None:
             return None, 0.0
 
         try:
-            x = np.array(
-                [
-                    float(sensor_data.get("temperature", 0)),
-                    float(sensor_data.get("humidity", 0)),
-                    float(clothing_insulation),
-                ]
-            ).reshape(1, -1)
-        except Exception as exc:  # noqa: BLE001
+            temp = float(sensor_data.get("temperature", 0))
+            hum = float(sensor_data.get("humidity", 0))
+            
+            clothing_str = str(sensor_data.get("clothing", "sedang")).lower()
+            clothing_val = self.CLOTHING_MAP.get(clothing_str, 1)
+
+            x = np.array([temp, hum, float(clothing_val)]).reshape(1, -1)
+            
+        except Exception as exc: 
             logger.error(f"Invalid sensor data for prediction: {exc}")
             return None, 0.0
 
@@ -62,37 +66,33 @@ class EnvironmentClassifier:
 
     def _train_synthetic(self) -> Pipeline:
         rng = np.random.default_rng(42)
-
-        def block(mean_temp, mean_hum, clothing, label, n=80):
-            t = rng.normal(mean_temp, 1.8, n)
-            h = rng.normal(mean_hum, 5.0, n)
-            c = np.full(n, clothing)
-            y = np.full(n, label)
-            return np.column_stack([t, h, c]), y
-
-        xs, ys = [], []
-        for mean_t, mean_h, clothing, lbl in [
-            (25, 55, 1.0, "nyaman"),
-            (32, 35, 0.5, "panas_kering"),
-            (24, 80, 1.5, "lembap"),
-        ]:
-            x, y = block(mean_t, mean_h, clothing, lbl)
-            xs.append(x)
-            ys.append(y)
-
-        X = np.vstack(xs)
-        y = np.concatenate(ys)
+        
+        n = 1000
+        t = rng.uniform(18, 35, n)
+        h = rng.uniform(30, 90, n)
+        l = rng.uniform(100, 800, n)
+        c = rng.integers(0, 3, n)
+        
+        y = []
+        for i in range(n):
+            shift = 0
+            if c[i] == 0: shift = 1.5
+            if c[i] == 2: shift = -1.5
+            
+            opt_min, opt_max = 22.8 + shift, 25.8 + shift
+            
+            if (opt_min <= t[i] <= opt_max) and (40 <= h[i] <= 60):
+                y.append("Nyaman")
+            else:
+                y.append("Tidak Nyaman")
+                
+        X = np.column_stack([t, h, l, c])
+        y = np.array(y)
 
         pipeline = Pipeline(
             steps=[
                 ("scaler", StandardScaler()),
-                ("clf", RandomForestClassifier(
-                    n_estimators=120,
-                    max_depth=None,
-                    class_weight="balanced",
-                    random_state=42,
-                    n_jobs=-1,
-                )),
+                ("clf", RandomForestClassifier(n_estimators=100, random_state=42)),
             ]
         )
         pipeline.fit(X, y)

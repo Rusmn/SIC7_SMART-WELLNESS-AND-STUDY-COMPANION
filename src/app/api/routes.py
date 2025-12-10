@@ -8,12 +8,13 @@ from collections import Counter
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, WebSocket
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 
-from app.api.models import AckRequest, ClothingRequest, PlanRequest
+from app.api.models import AckRequest, PlanRequest
 from app.core import scheduler as scheduler_module
 from app.core.emotion import EmotionEngine
+from app.core.clothing import ClothingEngine
 from app.core.environment_classifier import EnvironmentClassifier
 from app.core.mqtt import (
     MQTTService,
@@ -32,7 +33,6 @@ from app.core.scheduler import Scheduler
 router = APIRouter()
 logger = logging.getLogger("main")
 
-
 def _build_status_payload(
     app_state,
     simulate: bool = False,
@@ -45,7 +45,8 @@ def _build_status_payload(
     mqtt: MQTTService = app_state.mqtt
     latest_emotion = app_state.latest_emotion
     env_classifier: EnvironmentClassifier = app_state.env_classifier
-    clothing_state = app_state.clothing
+    
+    latest_clothing_label = getattr(app_state, "latest_clothing", "Sedang")
 
     if simulate:
         data = {
@@ -63,31 +64,37 @@ def _build_status_payload(
     except Exception:
         light_value = 0.0
 
+    clothing_map = {"tipis": 0, "sedang": 1, "tebal": 2}
+    current_clothing_val = clothing_map.get(str(latest_clothing_label).lower(), 1)
+
     clothing_value = clothing_insulation
     if clothing_value is None:
-        clothing_value = float(clothing_state.get("insulation", 1.0))
+        clothing_value = float(current_clothing_val)
 
-    clothing_info = clothing_state.copy()
-    if simulate:
-        clothing_info = {
-            "insulation": clothing_value,
-            "source": "simulate",
-            "updated_at": time.time(),
-        }
+    clothing_info = {
+        "insulation": clothing_value,
+        "label": str(latest_clothing_label),
+        "source": "simulate" if simulate else "camera",
+        "updated_at": time.time(),
+    }
 
     if light_value == 0.0:
         cond = "gelap"
         conf = 1.0
         alert = "tidak_ideal"
     else:
-        label, conf = env_classifier.predict(data, clothing_value)
+        label, conf = env_classifier.predict(data)
         if label:
             cond = str(label)
             good_labels = {"nyaman", "aman", "ideal", "normal"}
-            if cond.lower() in good_labels and conf >= 0.6:
-                alert = "ideal"
-            elif cond.lower() in good_labels and conf >= 0.3:
-                alert = "kurang_ideal"
+            
+            if cond.lower() in good_labels:
+                if conf >= 0.6:
+                    alert = "ideal"
+                elif conf >= 0.3:
+                    alert = "kurang_ideal"
+                else:
+                    alert = "tidak_ideal"
             else:
                 alert = "tidak_ideal"
         else:
@@ -125,7 +132,6 @@ def start(req: PlanRequest, request: Request):
     plan = scheduler_module.compute_plan(req.duration_min)
     scheduler.start(plan)
 
-    # Reset emotion history for new session and mark start time
     request.app.state.emotion_history = []
     request.app.state.session_start_time = time.time()
 
@@ -175,27 +181,42 @@ def ack_water(req: AckRequest, request: Request):
 @router.get("/status")
 def get_status(
     request: Request,
-    simulate: bool = Query(False, description="Gunakan data simulasi, bukan MQTT"),
-    temp: Optional[float] = Query(None, alias="temperature"),
-    hum: Optional[float] = Query(None, alias="humidity"),
-    clothing_insulation: Optional[float] = Query(None),
-    light: Optional[float] = Query(None),
+    simulate: bool = False,
+    temperature: Optional[float] = None,
+    humidity: Optional[float] = None,
+    clothing_insulation: Optional[float] = None,
+    light: Optional[float] = None
 ):
-    return _build_status_payload(request.app.state, simulate, temp, hum, clothing_insulation, light)
+    return _build_status_payload(
+        app_state=request.app.state,
+        simulate=simulate,
+        temp=temperature,
+        hum=humidity,
+        clothing_insulation=clothing_insulation,
+        light=light
+    )
 
 
-@router.post("/clothing")
-def set_clothing(req: ClothingRequest, request: Request):
-    clothing_state = request.app.state.clothing
-    clothing_state["insulation"] = float(req.insulation)
-    clothing_state["source"] = "manual"
-    clothing_state["updated_at"] = time.time()
-    return {"ok": True, "clothing": clothing_state}
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
 
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
 
-@router.get("/clothing")
-def get_clothing(request: Request):
-    return request.app.state.clothing
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                pass
+
+manager = ConnectionManager()
 
 
 @router.websocket("/ws/status")
@@ -207,7 +228,7 @@ async def ws_status(
     clothing_insulation: Optional[float] = None,
     light: Optional[float] = None,
 ):
-    await websocket.accept()
+    await manager.connect(websocket)
     try:
         while True:
             payload = _build_status_payload(
@@ -221,30 +242,27 @@ async def ws_status(
             await websocket.send_text(json.dumps(payload))
             await asyncio.sleep(1)
     except Exception:
-        try:
-            await websocket.close()
-        except Exception:
-            pass
+        pass
+    finally:
+        manager.disconnect(websocket)
 
 
 @router.websocket("/ws/emotion")
 async def ws_emotion(websocket: WebSocket):
-    await websocket.accept()
+    await manager.connect(websocket)
     try:
         while True:
-            latest = websocket.app.state.latest_emotion  # type: ignore[attr-defined]
+            latest = websocket.app.state.latest_emotion
             await websocket.send_text(json.dumps(latest))
             await asyncio.sleep(1)
     except Exception:
-        try:
-            await websocket.close()
-        except Exception:
-            pass
+        pass
+    finally:
+        manager.disconnect(websocket)
 
 
 @router.get("/emotion/summary")
 def get_emotion_summary(request: Request):
-    """Get emotion statistics from the current/last session."""
     history = request.app.state.emotion_history
     session_start = request.app.state.session_start_time
 
@@ -257,7 +275,6 @@ def get_emotion_summary(request: Request):
             "average_confidence": 0.0,
         }
 
-    # Filter only emotions from current session (if session_start is set)
     if session_start > 0:
         history = [r for r in history if r["timestamp"] >= session_start]
 
@@ -270,21 +287,17 @@ def get_emotion_summary(request: Request):
             "average_confidence": 0.0,
         }
 
-    # Count emotions
     emotion_labels = [record["label"] for record in history]
     emotion_counts = Counter(emotion_labels)
     total = len(emotion_labels)
 
-    # Calculate percentages
     emotion_percentages = {
         label: round((count / total) * 100, 2)
         for label, count in emotion_counts.items()
     }
 
-    # Most frequent emotion
     most_frequent = emotion_counts.most_common(1)[0] if emotion_counts else (None, 0)
 
-    # Average confidence
     avg_confidence = sum(record["score"] for record in history) / total if total > 0 else 0.0
 
     return {
@@ -302,25 +315,20 @@ def get_emotion_summary(request: Request):
 
 @router.get("/emotion/export")
 def export_emotion_csv(request: Request):
-    """Export emotion history as CSV file."""
     history = request.app.state.emotion_history
     session_start = request.app.state.session_start_time
 
-    # Filter only emotions from current session
     if session_start > 0:
         history = [r for r in history if r["timestamp"] >= session_start]
 
     if not history:
         raise HTTPException(status_code=404, detail="No emotion data to export")
 
-    # Create CSV in memory
     output = io.StringIO()
     writer = csv.writer(output)
 
-    # Write header
     writer.writerow(["Timestamp", "DateTime", "Emotion", "Confidence", "Confidence %"])
 
-    # Write data
     for record in history:
         timestamp = record["timestamp"]
         dt = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
@@ -330,7 +338,6 @@ def export_emotion_csv(request: Request):
 
         writer.writerow([timestamp, dt, label, score, score_pct])
 
-    # Prepare response
     output.seek(0)
     filename = f"emotion_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
 
@@ -346,6 +353,7 @@ async def camera_analyze(request: Request, file: UploadFile = File(...)):
     latest_emotion = request.app.state.latest_emotion
     mqtt: MQTTService = request.app.state.mqtt
     emotion: Optional[EmotionEngine] = request.app.state.emotion
+    clothing: Optional[ClothingEngine] = request.app.state.clothing
     scheduler: Scheduler = request.app.state.scheduler
 
     try:
@@ -353,6 +361,7 @@ async def camera_analyze(request: Request, file: UploadFile = File(...)):
             raise HTTPException(status_code=503, detail="Emotion model not ready")
 
         img = await file.read()
+        
         label, score = emotion.predict(img)
 
         if label:
@@ -364,20 +373,29 @@ async def camera_analyze(request: Request, file: UploadFile = File(...)):
             }
             request.app.state.latest_emotion = latest_emotion
 
-            # Save to history if session is running
             if scheduler.running:
                 request.app.state.emotion_history.append({
                     "label": label,
                     "score": float(score),
                     "timestamp": timestamp,
                 })
+            
+            await manager.broadcast(latest_emotion)
+
+        if clothing:
+            clothing_label = clothing.predict(img)
+            request.app.state.latest_clothing = clothing_label
 
         action = "NONE"
         if label in ["sad", "angry", "fear", "disgust"] and score > 0.5:
             mqtt.publish(TOPIC_ALERT_BREAK, "START")
             action = "TRIGGER_BREAK"
 
-        return {"emotion": latest_emotion, "action": action}
-    except Exception as exc:  # noqa: BLE001
+        return {
+            "emotion": latest_emotion, 
+            "clothing": request.app.state.latest_clothing,
+            "action": action
+        }
+    except Exception as exc:
         logger.error(f"Camera analyze error: {exc}")
         return {"error": str(exc)}

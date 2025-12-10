@@ -4,17 +4,20 @@ import torch
 import io
 import logging
 
+logger = logging.getLogger("uvicorn")
+
 class ClothingEngine:
     def __init__(self):
-        self.logger = logging.getLogger("uvicorn")
+        # Load Model sekali saja saat init
         model_id = "openai/clip-vit-base-patch32"
         try:
             self.model = CLIPModel.from_pretrained(model_id)
             self.processor = CLIPProcessor.from_pretrained(model_id)
-            self.logger.info("ClothingEngine model loaded successfully.")
+            logger.info("ClothingEngine model loaded successfully.")
         except Exception as e:
-            self.logger.error(f"Failed to load ClothingEngine model: {e}")
+            logger.error(f"Failed to load ClothingEngine model: {e}")
 
+        # Prompt Definisi Pakaian
         self.candidate_labels = [
             "a photo of a person wearing a thin sleeveless tank top or singlet",
             "a photo of a person wearing a short-sleeve t-shirt",
@@ -23,30 +26,28 @@ class ClothingEngine:
             "a photo of a person wearing a heavy wool sweater"
         ]
 
-    def predict(self, image_bytes):
+    def predict(self, image_bytes) -> str:
         try:
             image = Image.open(io.BytesIO(image_bytes))
+            
+            # Preprocessing & Inferensi
             inputs = self.processor(text=self.candidate_labels, images=image, return_tensors="pt", padding=True)
-
             with torch.no_grad():
                 outputs = self.model(**inputs)
-
+            
+            # Ambil label dengan probabilitas tertinggi
             probs = outputs.logits_per_image.softmax(dim=1)
             predicted_index = probs.argmax().item()
             predicted_label = self.candidate_labels[predicted_index]
-            score = probs[0][predicted_index].item()
-
-            final_category = "Tebal"
-
+            
+            # Mapping ke 3 Kategori Utama
             if "sleeveless" in predicted_label or "t-shirt" in predicted_label:
-                final_category = "Tipis"
+                return "Tipis"
             elif "formal shirt" in predicted_label or "button-down" in predicted_label:
-                final_category = "Sedang"
+                return "Sedang"
             else:
-                final_category = "Tebal"
-
-            return final_category, score
-
+                return "Tebal"
+                
         except Exception as e:
-            self.logger.error(f"Error in ClothingEngine predict: {e}")
-            return None, 0.0
+            logger.error(f"Error in ClothingEngine predict: {e}")
+            return "Sedang" # Fallback default

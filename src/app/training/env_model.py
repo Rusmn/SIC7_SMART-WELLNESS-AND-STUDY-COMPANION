@@ -23,18 +23,47 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
-DEFAULT_INPUT_PATH = ROOT_DIR / "data" / "raw" / "environment.csv"
+# Sesuaikan default path ini jika lokasi dataset Anda berbeda
+DEFAULT_INPUT_PATH = ROOT_DIR / "data" / "processed" / "final_dataset_labeled.csv" 
 DEFAULT_MODEL_PATH = ROOT_DIR / "src" / "models" / "environment.pkl"
 
+# Mapping untuk mengubah teks pakaian menjadi angka (Ordinal Encoding)
+# Tipis < Sedang < Tebal
+CLOTHING_MAP = {
+    'tipis': 0,
+    'sedang': 1,
+    'tebal': 2
+}
 
 def load_dataset(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Load dataset dengan kolom: 
+    Timestamp, Temperature, Humidity, Pakaian, Label_Prediksi
+    """
     df = pd.read_csv(path)
-    required = {"temperature", "humidity", "clothing_insulation", "label"}
+    
+    required = {"Temperature", "Humidity", "Pakaian", "Label_Prediksi"}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"Missing columns in dataset: {missing}")
-    X = df[["temperature", "humidity", "clothing_insulation"]].to_numpy()
-    y = df["label"].astype(str).to_numpy()
+
+    # 1. Preprocessing Kolom Pakaian (String -> Integer)
+    # Kita ubah jadi lowercase dulu biar aman, lalu map ke angka
+    df['Pakaian_Int'] = df['Pakaian'].astype(str).str.lower().map(CLOTHING_MAP)
+    
+    # Cek jika ada data pakaian yang tidak dikenali (NaN)
+    if df['Pakaian_Int'].isna().any():
+        print("Warning: Ditemukan nilai 'Pakaian' yang tidak valid. Menggunakan default 'sedang' (1).")
+        df['Pakaian_Int'] = df['Pakaian_Int'].fillna(1)
+    
+    # 2. Susun X (Features) dan y (Target)
+    # Urutan fitur: Temperature, Humidity, Pakaian
+    feature_cols = ["Temperature", "Humidity", "Pakaian_Int"]
+    
+    X = df[feature_cols].to_numpy()
+    y = df["Label_Prediksi"].astype(str).to_numpy()
+    
+    print(f"Dataset loaded. Features shape: {X.shape}, Target shape: {y.shape}")
     return X, y
 
 
@@ -109,15 +138,24 @@ MODEL_BUILDERS: Dict[str, Callable[[], Pipeline]] = {
 
 
 def train_environment_model(input_path: Path, output_path: Path, model_name: str) -> None:
-    X, y = load_dataset(input_path)
+    print(f"Loading data from {input_path}...")
+    try:
+        X, y = load_dataset(input_path)
+    except FileNotFoundError:
+        print(f"Error: File not found at {input_path}")
+        return
+
+    print("Splitting data...")
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
 
+    print(f"Training {model_name} model...")
     builder = MODEL_BUILDERS[model_name]
     pipeline = builder()
     pipeline.fit(X_train, y_train)
 
+    print("Evaluating model...")
     y_pred = pipeline.predict(X_test)
     report = classification_report(y_test, y_pred)
     print(f"Validation report ({model_name}):\n{report}")
@@ -128,14 +166,12 @@ def train_environment_model(input_path: Path, output_path: Path, model_name: str
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Train environment classifier (features: temperature, humidity, clothing_insulation)."
-    )
+    parser = argparse.ArgumentParser(description="Train environment classifier.")
     parser.add_argument(
         "--input",
         type=Path,
         default=DEFAULT_INPUT_PATH,
-        help="Path to labeled CSV (columns: temperature, humidity, light, label)",
+        help="Path to labeled CSV (columns: Timestamp, Temperature, Humidity, Pakaian, Label_Prediksi)",
     )
     parser.add_argument(
         "--output",

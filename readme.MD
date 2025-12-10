@@ -58,8 +58,8 @@ streamlit run dashboard/streamlit_app.py --server.port 8501
 
 - **Data**: kumpulkan CSV minimal 150 baris dari sensor (`temperature, humidity, light, label`) ke `data/raw/environment.csv`.
 - **Training**: jalankan dari root repo:
-  - `python scripts/train_env_model.py --input data/raw/environment.csv --output src/models/environment.pkl`
-  - atau (jika berada di folder `src/`): `python -m app.training.env_model --input ../data/raw/environment.csv --output ./models/environment.pkl`
+  - `python scripts/train_env_model.py --input data/processed/final_dataset.csv --output src/models/environment.pkl`
+  - atau (jika berada di folder `src/`): `python -m app.training.env_model --input ../data/processed/final_dataset.csv --output ./models/environment.pkl`
 - **Serving**: backend otomatis memuat model dari `src/models/environment.pkl` (atau melatih model sintetis fallback jika belum ada) lalu mengirim label & confidence ke dashboard dan MQTT alert.
 
 Struktur tambahan:

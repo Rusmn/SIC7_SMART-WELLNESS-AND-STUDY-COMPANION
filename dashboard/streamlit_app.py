@@ -4,20 +4,18 @@ from pathlib import Path
 import streamlit as st
 from streamlit import components
 
-# Ensure project root on sys.path so absolute imports work when run via `streamlit run`
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Support running via Streamlit script (no package parent) or as module
 try:
     from .api import api_get, get_base_url, set_base_url
     from .styles import build_custom_css, load_base_css
-    from .tabs import tab_countdown, tab_emotion, tab_monitor, tab_water
-except ImportError:  # pragma: no cover - fallback for direct script run
+    from .tabs import tab_countdown, tab_emotion, tab_monitor, tab_water, render_camera_component
+except ImportError:
     from dashboard.api import api_get, get_base_url, set_base_url
     from dashboard.styles import build_custom_css, load_base_css
-    from dashboard.tabs import tab_countdown, tab_emotion, tab_monitor, tab_water
+    from dashboard.tabs import tab_countdown, tab_emotion, tab_monitor, tab_water, render_camera_component
 
 
 def main() -> None:
@@ -49,11 +47,9 @@ def main() -> None:
     if "sim_light" not in st.session_state:
         st.session_state.sim_light = "Terang"
 
-    # Probe koneksi MQTT realtime
     probe_data, probe_err = api_get("/status")
     mqtt_available = bool(not probe_err and probe_data.get("mqtt_connected", False))
 
-    # Tentukan apakah simulation wajib
     sim_disabled = False
     if not mqtt_available:
         st.session_state.sim_mode = True
@@ -97,7 +93,6 @@ def main() -> None:
             f"&light={0 if st.session_state.sim_light == 'Gelap' else (50 if st.session_state.sim_light == 'Redup' else 150)}"
         )
 
-    # Ambil data sesuai mode (reuse probe jika realtime)
     if st.session_state.sim_mode:
         status_path = build_status_path(True)
         data, err = api_get(status_path)
@@ -135,7 +130,6 @@ def main() -> None:
     st.caption(f"Status: {status} ({alert_txt}) • MQTT: {mqtt_ok} • Pakaian: {cloth_label} • Mode: {sim_label}")
 
     tabs = ["Countdown", "Ceklis Air", "Monitoring", "Emotion"]
-    # Persist tab via query params agar F5 tidak selalu ke tab pertama
     params = st.query_params
     if "active_tab" not in st.session_state:
         tab_param = params.get("tab")
@@ -167,6 +161,10 @@ def main() -> None:
         tab_monitor(data)
     elif st.session_state.active_tab == "Emotion":
         tab_emotion(data)
+
+    st.markdown("---")
+    is_running = sched.get("running", False)
+    render_camera_component(is_running)
 
 
 if __name__ == "__main__":

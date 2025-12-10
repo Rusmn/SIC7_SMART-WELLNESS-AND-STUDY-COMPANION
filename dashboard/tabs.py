@@ -6,17 +6,15 @@ import pandas as pd
 import streamlit as st
 from streamlit import components
 
-# Support running as package or direct script import
 try:
     from .api import api_get, api_get_plan, api_post, get_base_url
     from .utils import fmt_sec
-except ImportError:  # pragma: no cover - fallback for direct script run
+except ImportError:
     from dashboard.api import api_get, api_get_plan, api_post, get_base_url
     from dashboard.utils import fmt_sec
 
 
 def navbar(metrics: Dict[str, Any], status: str, alert: str, clothing: Dict[str, Any] | None = None) -> None:
-    """Display sensor metrics in clean card layout."""
     light_txt = "Gelap" if str(metrics.get("light", "0")) == "0.0" or str(metrics.get("light", "0")) == "0" else "Terang"
     status_class = "status-good" if alert == "good" else "status-bad"
     cloth_label = {0: "Tipis", 1: "Sedang", 2: "Tebal"}.get(int(clothing["insulation"])) if clothing and "insulation" in clothing else "-"
@@ -53,9 +51,147 @@ def navbar(metrics: Dict[str, Any], status: str, alert: str, clothing: Dict[str,
     """, unsafe_allow_html=True)
 
 
+def render_camera_component(is_running: bool) -> None:
+    st.markdown("<h3>📷 Live Camera Feed</h3>", unsafe_allow_html=True)
+
+    if "camera_active" not in st.session_state:
+        st.session_state.camera_active = False
+    if "camera_manual_override" not in st.session_state:
+        st.session_state.camera_manual_override = False
+
+    if is_running and not st.session_state.camera_active:
+        st.session_state.camera_active = True
+        st.session_state.camera_manual_override = False
+    elif not is_running and st.session_state.camera_active and not st.session_state.camera_manual_override:
+        st.session_state.camera_active = False
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        camera_status = "🟢 Active" if st.session_state.camera_active else "🔴 Inactive"
+        session_status = " (Auto - Session Running)" if is_running else " (Manual)" if st.session_state.camera_active else ""
+        st.markdown(f"**Camera Status:** {camera_status}{session_status}")
+    with col2:
+        if st.button("📷 Toggle Camera", key="global_cam_btn", use_container_width=True):
+            st.session_state.camera_active = not st.session_state.camera_active
+            st.session_state.camera_manual_override = st.session_state.camera_active and not is_running
+            st.rerun()
+
+    if st.session_state.camera_active or is_running:
+        webcam_html = f"""
+        <style>
+            #webcam-container {{
+                background: white;
+                border-radius: 10px;
+                padding: 1rem;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                text-align: center;
+                margin-top: 1rem;
+            }}
+            #webcam {{
+                width: 100%;
+                max-width: 640px;
+                border-radius: 8px;
+                background: #000;
+            }}
+            #capture-canvas {{
+                display: none;
+            }}
+        </style>
+        <div id="webcam-container">
+            <video id="webcam" autoplay playsinline></video>
+            <canvas id="capture-canvas"></canvas>
+            <div id="status" style="margin-top:0.5rem; font-size:0.875rem; color:#6a7380;">
+                Initializing camera...
+            </div>
+        </div>
+        <script>
+            (function() {{
+                const video = document.getElementById('webcam');
+                const canvas = document.getElementById('capture-canvas');
+                const status = document.getElementById('status');
+                const ctx = canvas.getContext('2d');
+                let captureInterval = null;
+                let lastCaptureTime = 0;
+
+                navigator.mediaDevices.getUserMedia({{ video: true }})
+                    .then(stream => {{
+                        video.srcObject = stream;
+                        status.textContent = '✅ Camera active - Capturing every 10 seconds';
+
+                        video.onloadedmetadata = () => {{
+                            setTimeout(() => {{
+                                captureAndSend();
+                            }}, 2000);
+                        }};
+
+                        captureInterval = setInterval(() => {{
+                            captureAndSend();
+                        }}, 10000);
+                    }})
+                    .catch(err => {{
+                        status.textContent = '❌ Camera access denied: ' + err.message;
+                    }});
+
+                function captureAndSend() {{
+                    const now = Date.now();
+                    if (now - lastCaptureTime < 5000) {{
+                        return;
+                    }}
+                    lastCaptureTime = now;
+                    
+                    if (!video || !video.videoWidth) return;
+
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    ctx.drawImage(video, 0, 0);
+
+                    canvas.toBlob(blob => {{
+                        const formData = new FormData();
+                        formData.append('file', blob, 'webcam.jpg');
+
+                        status.textContent = '📤 Analyzing emotion...';
+
+                        fetch('{get_base_url()}/camera/analyze', {{
+                            method: 'POST',
+                            body: formData
+                        }})
+                        .then(response => response.json())
+                        .then(data => {{
+                            if (data.emotion) {{
+                                status.textContent = '✅ Emotion detected: ' + data.emotion.label + ' (' + (data.emotion.score * 100).toFixed(1) + '%)';
+                            }} else {{
+                                status.textContent = '⚠️ No face detected';
+                            }}
+                        }})
+                        .catch(err => {{
+                            status.textContent = '❌ Error: ' + err.message;
+                        }});
+                    }}, 'image/jpeg', 0.9);
+                }}
+
+                window.addEventListener('beforeunload', () => {{
+                    if (captureInterval) clearInterval(captureInterval);
+                    if (video.srcObject) {{
+                        video.srcObject.getTracks().forEach(track => track.stop());
+                    }}
+                }});
+            }})();
+        </script>
+        """
+        components.v1.html(webcam_html, height=500)
+    else:
+        st.markdown("""
+            <div style="background:#f8f9fa; border-radius:10px; padding:2rem; text-align:center; color:#6c757d;">
+                📷 Camera is currently inactive<br>
+                <small>Start a study session or click "Toggle Camera" to enable</small>
+            </div>
+        """, unsafe_allow_html=True)
+
+
 def tab_countdown(plan: Dict[str, Any], sched: Dict[str, Any]) -> None:
-    """Countdown tab with planner and timer display."""
     st.markdown("<h2>⏱️ Study Planner</h2>", unsafe_allow_html=True)
+
+    is_running = sched.get("running", False)
 
     st.markdown('<label style="font-size:0.875rem; font-weight:600; color:var(--text-soft); margin-bottom:0.5rem;">Total Study Duration (minutes)</label>', unsafe_allow_html=True)
 
@@ -68,10 +204,11 @@ def tab_countdown(plan: Dict[str, Any], sched: Dict[str, Any]) -> None:
             value=60,
             step=5,
             key="dur_input",
-            label_visibility="collapsed"
+            label_visibility="collapsed",
+            disabled=is_running
         )
     with calc_btn_col:
-        if st.button("Calculate", use_container_width=True, type="primary"):
+        if st.button("Calculate", use_container_width=True, type="primary", disabled=is_running):
             new_plan, err = api_get_plan(int(dur))
             if err:
                 st.error(str(err))
@@ -79,7 +216,9 @@ def tab_countdown(plan: Dict[str, Any], sched: Dict[str, Any]) -> None:
                 st.session_state["plan_cache"] = new_plan
 
     show_plan = st.session_state.get("plan_cache") or plan
-    if show_plan and show_plan.get('break_interval_min'):
+    has_plan = show_plan and show_plan.get('break_interval_min')
+
+    if has_plan:
         water_milestones = show_plan.get('water_milestones', [])
         plan_html = f"""
         <div class="plan-summary-grid">
@@ -110,44 +249,48 @@ def tab_countdown(plan: Dict[str, Any], sched: Dict[str, Any]) -> None:
         </div>
         """
         st.markdown(plan_html, unsafe_allow_html=True)
+
+        st.markdown("<h2>🎯 Session Control</h2>", unsafe_allow_html=True)
+        btn_col1, btn_col2, btn_col3 = st.columns(3)
+
+        with btn_col1:
+            if st.button("▶️ Start", use_container_width=True, disabled=is_running):
+                st.session_state.camera_active = True
+                st.session_state.camera_manual_override = False
+                
+                err = api_post("/start", {"duration_min": int(dur)})
+                if err:
+                    st.error(str(err))
+                else:
+                    new_plan, _ = api_get_plan(int(dur))
+                    if new_plan:
+                        st.session_state["plan_cache"] = new_plan
+                    st.rerun()
+
+        with btn_col2:
+            if st.button("⏹️ Stop", use_container_width=True, disabled=not is_running):
+                err = api_post("/stop", {})
+                if err:
+                    st.error(str(err))
+                else:
+                    st.rerun()
+
+        with btn_col3:
+            if st.button("🔄 Reset", use_container_width=True, disabled=is_running):
+                err = api_post("/reset", {})
+                if err:
+                    st.error(str(err))
+                else:
+                    if "plan_cache" in st.session_state:
+                        del st.session_state["plan_cache"]
+                    st.rerun()
+
     else:
         st.markdown("""
             <div class="info-box">
                 💡 Enter your study duration above and click <strong>Calculate</strong> to generate your personalized study plan.
             </div>
         """, unsafe_allow_html=True)
-
-    st.markdown("<h2>🎯 Session Control</h2>", unsafe_allow_html=True)
-    btn_col1, btn_col2, btn_col3 = st.columns(3)
-
-    with btn_col1:
-        if st.button("▶️ Start", use_container_width=True):
-            err = api_post("/start", {"duration_min": int(dur)})
-            if err:
-                st.error(str(err))
-            else:
-                new_plan, _ = api_get_plan(int(dur))
-                if new_plan:
-                    st.session_state["plan_cache"] = new_plan
-                st.rerun()
-
-    with btn_col2:
-        if st.button("⏹️ Stop", use_container_width=True):
-            err = api_post("/stop", {})
-            if err:
-                st.error(str(err))
-            else:
-                st.rerun()
-
-    with btn_col3:
-        if st.button("🔄 Reset", use_container_width=True):
-            err = api_post("/reset", {})
-            if err:
-                st.error(str(err))
-            else:
-                if "plan_cache" in st.session_state:
-                    del st.session_state["plan_cache"]
-                st.rerun()
 
     st.markdown("<h2>⏰ Countdown Timer</h2>", unsafe_allow_html=True)
     phase_name = sched.get("phase", "IDLE").upper()
@@ -233,7 +376,6 @@ def tab_countdown(plan: Dict[str, Any], sched: Dict[str, Any]) -> None:
 
 
 def tab_water(plan: Dict[str, Any], water_active: Dict[str, Any]) -> None:
-    """Water checklist tab with clean milestone cards."""
     st.markdown("<h2>💧 Water Milestones</h2>", unsafe_allow_html=True)
 
     milestones = plan.get("water_milestones") or []
@@ -293,16 +435,12 @@ def tab_water(plan: Dict[str, Any], water_active: Dict[str, Any]) -> None:
 
 
 def tab_emotion(data: Dict[str, Any]) -> None:
-    """Emotion detection tab with real-time webcam."""
     st.markdown("<h2>😊 Emotion Detection</h2>", unsafe_allow_html=True)
 
     emotion_data = data.get("emotion", {})
     emotion_label = emotion_data.get("label", "Menunggu...")
     emotion_score = emotion_data.get("score", 0.0)
     emotion_timestamp = emotion_data.get("timestamp", 0)
-
-    sched = data.get("scheduler", {})
-    is_running = sched.get("running", False)
 
     emotion_config = {
         "angry": {"emoji": "😠", "color": "#dc3545", "bg": "#f8d7da", "text": "Marah"},
@@ -320,8 +458,22 @@ def tab_emotion(data: Dict[str, Any]) -> None:
     import datetime
     timestamp_str = datetime.datetime.fromtimestamp(emotion_timestamp).strftime("%H:%M:%S") if emotion_timestamp > 0 else "-"
 
-    emotion_display = f"""
-    <div style="background:{config['bg']}; border-radius:14px; padding:2rem; text-align:center; border:2px solid {config['color']}; margin:1.5rem 0; box-shadow: 0 4px 12px rgba(0,0,0,0.1);" id="emotion-card">
+    base = get_base_url()
+    ws_base = base.replace("https://", "wss://").replace("http://", "ws://")
+    ws_url = f"{ws_base}/ws/emotion"
+
+    html_content = f"""
+    <style>
+        body {{
+            font-family: "Source Sans Pro", sans-serif;
+            margin: 0;
+            padding: 10px;
+        }}
+        #emotion-card {{
+            transition: all 0.3s ease;
+        }}
+    </style>
+    <div style="background:{config['bg']}; border-radius:14px; padding:2rem; text-align:center; border:2px solid {config['color']}; box-shadow: 0 4px 12px rgba(0,0,0,0.1);" id="emotion-card">
         <div style="font-size:4rem; margin-bottom:0.5rem;" id="emotion-emoji">{config['emoji']}</div>
         <div style="font-size:1.75rem; font-weight:700; color:{config['color']}; margin-bottom:0.5rem;" id="emotion-label">
             {config['text']}
@@ -333,40 +485,52 @@ def tab_emotion(data: Dict[str, Any]) -> None:
             Last updated: <span id="emotion-time">{timestamp_str}</span>
         </div>
     </div>
-    """
-    st.markdown(emotion_display, unsafe_allow_html=True)
 
-    # Live update via WebSocket (update kartu utama)
-    base = get_base_url()
-    ws_base = base.replace("https://", "wss://").replace("http://", "ws://")
-    ws_url = f"{ws_base}/ws/emotion"
-    emoji_map = {k: v["emoji"] for k, v in emotion_config.items()}
-    live_html = f"""
     <script>
         (function() {{
-            const map = {json.dumps(emoji_map)};
+            const config = {json.dumps(emotion_config)};
+            const wsUrl = "{ws_url}";
             let ws;
+
             function connect() {{
                 try {{
-                    ws = new WebSocket("{ws_url}");
+                    ws = new WebSocket(wsUrl);
                     ws.onmessage = (evt) => {{
                         try {{
                             const em = JSON.parse(evt.data || "null");
                             if (!em) return;
-                            const lblRaw = em.label || "Menunggu...";
-                            const lbl = lblRaw.toLowerCase();
+                            
+                            const lblRaw = em.label || "neutral";
+                            const lblKey = lblRaw.toLowerCase();
                             const scr = em.score !== undefined ? (parseFloat(em.score)*100).toFixed(1) + "%" : "-";
                             const ts = em.timestamp ? new Date(em.timestamp*1000).toLocaleTimeString() : "-";
+                            
                             const emojiEl = document.getElementById("emotion-emoji");
                             const labelEl = document.getElementById("emotion-label");
                             const scoreEl = document.getElementById("emotion-score");
                             const timeEl = document.getElementById("emotion-time");
-                            if (emojiEl && map[lbl]) emojiEl.textContent = map[lbl];
-                            if (labelEl) labelEl.textContent = lblRaw;
+                            const cardEl = document.getElementById("emotion-card");
+                            
+                            if (config[lblKey]) {{
+                                const c = config[lblKey];
+                                if (emojiEl) emojiEl.textContent = c.emoji;
+                                if (labelEl) {{
+                                    labelEl.textContent = c.text;
+                                    labelEl.style.color = c.color;
+                                }}
+                                if (cardEl) {{
+                                    cardEl.style.backgroundColor = c.bg;
+                                    cardEl.style.borderColor = c.color;
+                                }}
+                            }} else {{
+                                if (labelEl) labelEl.textContent = lblRaw;
+                            }}
+
                             if (scoreEl) scoreEl.textContent = scr;
                             if (timeEl) timeEl.textContent = ts;
+
                         }} catch (e) {{
-                            console.warn("ws emotion parse error", e);
+                            console.warn("WS parse error", e);
                         }}
                     }};
                     ws.onclose = () => setTimeout(connect, 2000);
@@ -378,146 +542,8 @@ def tab_emotion(data: Dict[str, Any]) -> None:
         }})();
     </script>
     """
-    components.v1.html(live_html, height=0)
-
-    st.markdown("<h3>📷 Live Camera Feed</h3>", unsafe_allow_html=True)
-
-    if "camera_active" not in st.session_state:
-        st.session_state.camera_active = False
-    if "camera_manual_override" not in st.session_state:
-        st.session_state.camera_manual_override = False
-
-    if is_running and not st.session_state.camera_active:
-        st.session_state.camera_active = True
-        st.session_state.camera_manual_override = False
-    elif not is_running and st.session_state.camera_active and not st.session_state.camera_manual_override:
-        st.session_state.camera_active = False
-
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        camera_status = "🟢 Active" if st.session_state.camera_active else "🔴 Inactive"
-        session_status = " (Auto - Session Running)" if is_running else " (Manual)" if st.session_state.camera_active else ""
-        st.markdown(f"**Camera Status:** {camera_status}{session_status}")
-    with col2:
-        if st.button("📷 Toggle Camera", use_container_width=True):
-            st.session_state.camera_active = not st.session_state.camera_active
-            st.session_state.camera_manual_override = st.session_state.camera_active and not is_running
-            st.rerun()
-
-    if st.session_state.camera_active or is_running:
-        webcam_html = f"""
-        <style>
-            #webcam-container {{
-                background: white;
-                border-radius: 10px;
-                padding: 1rem;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                text-align: center;
-            }}
-            #webcam {{
-                width: 100%;
-                max-width: 640px;
-                border-radius: 8px;
-                background: #000;
-            }}
-            #capture-canvas {{
-                display: none;
-            }}
-        </style>
-        <div id="webcam-container">
-            <video id="webcam" autoplay playsinline></video>
-            <canvas id="capture-canvas"></canvas>
-            <div id="status" style="margin-top:0.5rem; font-size:0.875rem; color:#6a7380;">
-                Initializing camera...
-            </div>
-        </div>
-        <script>
-            if (window.emotionCaptureActive) {{
-                console.log('Emotion capture already active, skipping duplicate');
-            }} else {{
-                window.emotionCaptureActive = true;
-
-                const video = document.getElementById('webcam');
-                const canvas = document.getElementById('capture-canvas');
-                const status = document.getElementById('status');
-                const ctx = canvas.getContext('2d');
-                let captureInterval = null;
-                let lastCaptureTime = 0;
-
-                navigator.mediaDevices.getUserMedia({{ video: true }})
-                    .then(stream => {{
-                        video.srcObject = stream;
-                        status.textContent = '✅ Camera active - Capturing every 10 seconds';
-
-                        video.onloadedmetadata = () => {{
-                            setTimeout(() => {{
-                                captureAndSend();
-                            }}, 2000);
-                        }};
-
-                        captureInterval = setInterval(() => {{
-                            captureAndSend();
-                        }}, 10000);
-                    }})
-                    .catch(err => {{
-                        status.textContent = '❌ Camera access denied: ' + err.message;
-                        window.emotionCaptureActive = false;
-                    }});
-
-                function captureAndSend() {{
-                    const now = Date.now();
-                    if (now - lastCaptureTime < 5000) {{
-                        console.log('Skipping capture - too soon since last one');
-                        return;
-                    }}
-                    lastCaptureTime = now;
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-
-                ctx.drawImage(video, 0, 0);
-
-                canvas.toBlob(blob => {{
-                    const formData = new FormData();
-                    formData.append('file', blob, 'webcam.jpg');
-
-                    status.textContent = '📤 Analyzing emotion...';
-
-                    fetch('{get_base_url()}/camera/analyze', {{
-                        method: 'POST',
-                        body: formData
-                    }})
-                    .then(response => response.json())
-                    .then(data => {{
-                        if (data.emotion) {{
-                            status.textContent = '✅ Emotion detected: ' + data.emotion.label + ' (' + (data.emotion.score * 100).toFixed(1) + '%)';
-                        }} else {{
-                            status.textContent = '⚠️ No face detected';
-                        }}
-                    }})
-                    .catch(err => {{
-                        status.textContent = '❌ Error: ' + err.message;
-                    }});
-                }}, 'image/jpeg', 0.9);
-            }}
-
-                window.addEventListener('beforeunload', () => {{
-                    if (captureInterval) clearInterval(captureInterval);
-                    if (video.srcObject) {{
-                        video.srcObject.getTracks().forEach(track => track.stop());
-                    }}
-                    window.emotionCaptureActive = false;
-                }});
-            }}
-        </script>
-        """
-        components.v1.html(webcam_html, height=500)
-    else:
-        st.markdown("""
-            <div style="background:#f8f9fa; border-radius:10px; padding:2rem; text-align:center; color:#6c757d;">
-                📷 Camera is currently inactive<br>
-                <small>Start a study session or click "Toggle Camera" to enable</small>
-            </div>
-        """, unsafe_allow_html=True)
+    
+    components.v1.html(html_content, height=400)
 
     summary_data, summary_err = api_get("/emotion/summary")
 
@@ -536,16 +562,6 @@ def tab_emotion(data: Dict[str, Any]) -> None:
         emotion_counts = summary_data["emotion_counts"]
         emotion_pcts = summary_data["emotion_percentages"]
         avg_conf = summary_data["average_confidence"]
-
-        emotion_config = {
-            "angry": {"emoji": "😠", "color": "#dc3545", "text": "Marah"},
-            "disgust": {"emoji": "🤢", "color": "#6c757d", "text": "Jijik"},
-            "fear": {"emoji": "😨", "color": "#fd7e14", "text": "Takut"},
-            "happy": {"emoji": "😊", "color": "#28a745", "text": "Bahagia"},
-            "sad": {"emoji": "😢", "color": "#17a2b8", "text": "Sedih"},
-            "surprise": {"emoji": "😲", "color": "#ffc107", "text": "Terkejut"},
-            "neutral": {"emoji": "😐", "color": "#6c757d", "text": "Netral"},
-        }
 
         if most_freq and most_freq["label"]:
             mf_label = most_freq["label"]
@@ -584,68 +600,30 @@ def tab_emotion(data: Dict[str, Any]) -> None:
                 export_url = f"{get_base_url()}/emotion/export"
                 st.markdown(f'<a href="{export_url}" target="_blank"><button style="background:#28a745; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:600; width:100%;">📥 Download CSV</button></a>', unsafe_allow_html=True)
 
-    st.markdown("<h3>ℹ️ About Real-time Detection</h3>", unsafe_allow_html=True)
-    st.markdown("""
-        <div style="background:white; border-radius:10px; padding:1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
-            <p style="margin:0; font-size:0.875rem; color:#6a7380;">
-                📸 The camera automatically starts when you begin a study session and captures your facial expression <strong>every 10 seconds</strong>.
-            </p>
-            <p style="margin:0.5rem 0 0 0; font-size:0.875rem; color:#6a7380;">
-                🤖 The AI analyzes 7 emotions: <strong>Happy, Sad, Angry, Surprise, Fear, Disgust, and Neutral</strong>.
-            </p>
-            <p style="margin:0.5rem 0 0 0; font-size:0.875rem; color:#6a7380;">
-                💡 <em>Tip:</em> Ensure good lighting and sit facing the camera for best results.
-            </p>
-        </div>
-    """, unsafe_allow_html=True)
-
 
 def tab_monitor(data: Dict[str, Any]) -> None:
-    """Environmental monitoring tab with sensor cards."""
     st.markdown("<h2>🌡️ Environment Monitoring</h2>", unsafe_allow_html=True)
 
     sensor = data.get("sensor", {}) or {}
     status_text = data.get("status", "-")
     alert_level = data.get("alert_level", "unknown")
-    try:
-        light_val = float(sensor.get("light", 0) or 0)
-    except Exception:
-        light_val = 0.0
-    if light_val == 0:
-        light_txt = "Gelap"
-    elif light_val <= 50:
-        light_txt = "Redup"
-    else:
-        light_txt = "Terang"
-    clothing = data.get("clothing", {}) or {}
     simulate = data.get("simulate", False)
+    clothing = data.get("clothing", {}) or {}
 
-    monitor_html = f"""
-    <div class="monitor-grid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:0.75rem; margin:1rem 0;">
-        <div class="monitor-card" style="background:white; border-radius:10px; padding:1rem; text-align:center; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border: 1px solid #e2e7f1;">
-            <div class="monitor-title" style="font-size:0.875rem; color:var(--text-soft); margin-bottom:0.5rem;">Temperature</div>
-            <div class="monitor-value" style="font-size:1.75rem; font-weight:700; color:var(--accent);">{sensor.get('temperature', '-')} °C</div>
-        </div>
-        <div class="monitor-card" style="background:white; border-radius:10px; padding:1rem; text-align:center; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border: 1px solid #e2e7f1;">
-            <div class="monitor-title" style="font-size:0.875rem; color:var(--text-soft); margin-bottom:0.5rem;">Humidity</div>
-            <div class="monitor-value" style="font-size:1.75rem; font-weight:700; color:var(--accent);">{sensor.get('humidity', '-')} %</div>
-        </div>
-        <div class="monitor-card" style="background:white; border-radius:10px; padding:1rem; text-align:center; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border: 1px solid #e2e7f1;">
-            <div class="monitor-title" style="font-size:0.875rem; color:var(--text-soft); margin-bottom:0.5rem;">Light</div>
-            <div class="monitor-value" style="font-size:1.75rem; font-weight:700; color:var(--accent);">{light_txt}</div>
-        </div>
-    </div>
-    """
-    st.markdown(monitor_html, unsafe_allow_html=True)
-
-    # Simpan riwayat untuk chart
-    if "env_history" not in st.session_state:
-        st.session_state.env_history = []
     try:
         temp_val = float(sensor.get("temperature", 0))
         hum_val = float(sensor.get("humidity", 0))
+        light_val = float(sensor.get("light", 0) or 0)
     except Exception:
-        temp_val, hum_val = 0.0, 0.0
+        temp_val, hum_val, light_val = 0.0, 0.0, 0.0
+
+    light_txt = "Gelap" if light_val == 0 else "Terang"
+    cloth_label = {0: "Tipis", 1: "Sedang", 2: "Tebal"}.get(int(clothing.get("insulation", 1)) if clothing else 1, "Sedang")
+    cloth_source = clothing.get("source", "default")
+
+    if "env_history" not in st.session_state:
+        st.session_state.env_history = []
+    
     st.session_state.env_history.append({
         "timestamp": time.time(),
         "temperature": temp_val,
@@ -654,19 +632,178 @@ def tab_monitor(data: Dict[str, Any]) -> None:
     })
     st.session_state.env_history = st.session_state.env_history[-50:]
 
-    cloth_label = {0: "Tipis", 1: "Sedang", 2: "Tebal"}.get(int(clothing.get("insulation", 1)) if clothing else 1, "Sedang")
-    cloth_source = clothing.get("source", "default")
-    clothing_html = f"""
-    <div class="monitor-grid" style="display:grid; grid-template-columns: repeat(1, 1fr); gap:0.75rem; margin:0.5rem 0 1rem 0;">
-        <div class="monitor-card" style="background:white; border-radius:10px; padding:1rem; text-align:center; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border: 1px solid #e2e7f1;">
-            <div class="monitor-title" style="font-size:0.875rem; color:var(--text-soft); margin-bottom:0.5rem;">Pakaian Terdeteksi</div>
-            <div class="monitor-value" style="font-size:1.5rem; font-weight:700; color:var(--accent);">{cloth_label}</div>
-            <div style="font-size:0.75rem; color:var(--text-soft); margin-top:0.25rem;">Source: {cloth_source}</div>
+    base = get_base_url()
+    ws_base = base.replace("https://", "wss://").replace("http://", "ws://")
+    
+    if simulate:
+        ws_url = f"{ws_base}/ws/status?simulate=true&temperature={temp_val}&humidity={hum_val}&light={light_val}&clothing_insulation={clothing.get('insulation', 1)}"
+    else:
+        ws_url = f"{ws_base}/ws/status"
+
+    html_content = f"""
+    <style>
+        body {{
+            font-family: "Source Sans Pro", sans-serif;
+            margin: 0;
+            padding: 0;
+        }}
+        .monitor-grid {{
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.75rem;
+            margin: 1rem 0;
+        }}
+        .monitor-card {{
+            background: white;
+            border-radius: 10px;
+            padding: 1rem;
+            text-align: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            border: 1px solid #e2e7f1;
+        }}
+        .monitor-title {{
+            font-size: 0.875rem;
+            color: #6a7380;
+            margin-bottom: 0.5rem;
+        }}
+        .monitor-value {{
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #1e4b8a;
+        }}
+        
+        .monitor-summary-card {{
+            border-radius: 10px;
+            padding: 1.5rem;
+            text-align: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            margin: 1.5rem 0;
+            border: 2px solid #ddd;
+            transition: all 0.3s ease;
+        }}
+        .summary-good {{ background: #e6f7e6; border-color: #a0d9a0; }}
+        .summary-warn {{ background: #fff3cd; border-color: #f1d99c; }}
+        .summary-bad {{ background: #fdeaea; border-color: #f3b6b6; }}
+        .summary-unknown {{ background: #f4f4f4; border-color: #ddd; }}
+        
+        .summary-title {{ font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem; }}
+        .summary-value {{ font-size: 2rem; font-weight: 700; }}
+    </style>
+
+    <div class="monitor-grid">
+        <div class="monitor-card">
+            <div class="monitor-title">Temperature</div>
+            <div class="monitor-value"><span id="val-temp">{temp_val}</span> °C</div>
+        </div>
+        <div class="monitor-card">
+            <div class="monitor-title">Humidity</div>
+            <div class="monitor-value"><span id="val-hum">{hum_val}</span> %</div>
+        </div>
+        <div class="monitor-card">
+            <div class="monitor-title">Light</div>
+            <div class="monitor-value" id="val-light">{light_txt}</div>
         </div>
     </div>
-    """
-    st.markdown(clothing_html, unsafe_allow_html=True)
 
+    <div class="monitor-grid" style="grid-template-columns: 1fr;">
+        <div class="monitor-card">
+            <div class="monitor-title">Pakaian Terdeteksi</div>
+            <div class="monitor-value" id="val-clothing">{cloth_label}</div>
+            <div style="font-size:0.75rem; color:#6a7380; margin-top:0.25rem;">Source: <span id="val-source">{cloth_source}</span></div>
+        </div>
+    </div>
+
+    <div id="summary-card" class="monitor-summary-card summary-unknown">
+        <div class="summary-title" id="summary-title">Environmental Condition</div>
+        <div class="summary-value" id="summary-value">Wait...</div>
+    </div>
+
+    <script>
+        (function() {{
+            const wsUrl = "{ws_url}";
+            const initialStatus = "{status_text}";
+            const initialAlert = "{alert_level}";
+            let ws;
+
+            function updateUI(data) {{
+                if (!data) return;
+                
+                // Update Sensors
+                const s = data.sensor || {{}};
+                const temp = s.temperature !== undefined ? s.temperature : "-";
+                const hum = s.humidity !== undefined ? s.humidity : "-";
+                let lightVal = parseFloat(s.light || 0);
+                let lightTxt = lightVal == 0 ? "Gelap" : "Terang";
+                
+                document.getElementById("val-temp").innerText = temp;
+                document.getElementById("val-hum").innerText = hum;
+                document.getElementById("val-light").innerText = lightTxt;
+
+                // Update Clothing
+                const c = data.clothing || {{}};
+                const ins = parseInt(c.insulation || 1);
+                const clothMap = {{0: "Tipis", 1: "Sedang", 2: "Tebal"}};
+                const clothSrc = c.source || "default";
+                document.getElementById("val-clothing").innerText = clothMap[ins] || "Sedang";
+                document.getElementById("val-source").innerText = clothSrc;
+
+                // Update Summary
+                const status = data.status || "-";
+                const alert = data.alert_level || "unknown";
+                const card = document.getElementById("summary-card");
+                const titleEl = document.getElementById("summary-title");
+                const valEl = document.getElementById("summary-value");
+                
+                let titleColor = "#6a7380";
+                let valText = "Data Tidak Tersedia";
+                
+                card.className = "monitor-summary-card"; // reset
+                
+                if (alert === "ideal") {{
+                    card.classList.add("summary-good");
+                    titleColor = "#2b612b";
+                    valText = "Ideal";
+                }} else if (alert === "kurang_ideal") {{
+                    card.classList.add("summary-warn");
+                    titleColor = "#cc8a1f";
+                    valText = "Kurang Ideal";
+                }} else if (alert === "tidak_ideal" || alert === "bad") {{
+                    card.classList.add("summary-bad");
+                    titleColor = "#8c2e2e";
+                    valText = "Tidak Ideal";
+                }} else {{
+                    card.classList.add("summary-unknown");
+                }}
+                
+                titleEl.style.color = titleColor;
+                valEl.style.color = titleColor;
+                valEl.innerText = valText;
+            }}
+
+            function connect() {{
+                try {{
+                    ws = new WebSocket(wsUrl);
+                    ws.onmessage = (evt) => {{
+                        try {{
+                            const msg = JSON.parse(evt.data);
+                            updateUI(msg);
+                        }} catch (e) {{ console.warn("WS JSON error", e); }}
+                    }};
+                    ws.onclose = () => setTimeout(connect, 2000);
+                }} catch (e) {{
+                    setTimeout(connect, 2000);
+                }}
+            }}
+            
+            // Initial render with passed data before WS connects
+            // (Optional, just to show something immediately)
+            
+            connect();
+        }})();
+    </script>
+    """
+    
+    components.v1.html(html_content, height=450)
 
     if st.session_state.env_history:
         hist_df = pd.DataFrame(st.session_state.env_history)
@@ -675,50 +812,10 @@ def tab_monitor(data: Dict[str, Any]) -> None:
         st.line_chart(hist_df.set_index("time")[["temperature", "humidity"]])
 
     if simulate:
-        st.info("Simulation mode aktif: data tidak berasal dari MQTT.")
-
-    if alert_level == "ideal":
-        summary_class = "good"
-        summary_text = "Ideal"
-        summary_color = "#2b612b"
-        summary_bg = "#e6f7e6"
-        summary_border = "#a0d9a0"
-    elif alert_level == "kurang_ideal":
-        summary_class = "warn"
-        summary_text = "Kurang Ideal"
-        summary_color = "#cc8a1f"
-        summary_bg = "#fff3cd"
-        summary_border = "#f1d99c"
-    elif alert_level == "tidak_ideal":
-        summary_class = "bad"
-        summary_text = "Tidak Ideal"
-        summary_color = "#8c2e2e"
-        summary_bg = "#fdeaea"
-        summary_border = "#f3b6b6"
-    else:
-        summary_class = "unknown"
-        summary_text = "Data Tidak Tersedia"
-        summary_color = "#6a7380"
-        summary_bg = "#f4f4f4"
-        summary_border = "#ddd"
-
-    # Tampilkan kondisi lingkungan hanya sebagai 3 kelas utama (Ideal/Kurang Ideal/Tidak Ideal)
-    env_label = summary_text
-
-    summary_html = f"""
-    <div class="monitor-summary-card {summary_class}" style="background:{summary_bg}; border-radius:10px; padding:1.5rem; text-align:center; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin:1.5rem 0; border: 2px solid {summary_border};">
-        <div class="monitor-title" style="font-size:0.875rem; color:{summary_color}; margin-bottom:0.5rem; font-weight:600;">
-            Environmental Condition
-        </div>
-        <div class="monitor-value" style="font-size:2rem; font-weight:700; color:{summary_color};">
-            {env_label}
-        </div>
-    </div>
-    """
-    st.markdown(summary_html, unsafe_allow_html=True)
+        st.info("Simulation mode aktif.")
 
     st.markdown("""
         <div style="text-align:center; margin-top:1rem; font-size:0.75rem; color:var(--text-soft);">
-            📡 Data diperbarui secara real-time dari sensor IoT
+            📡 Data diperbarui secara real-time via WebSocket
         </div>
     """, unsafe_allow_html=True)

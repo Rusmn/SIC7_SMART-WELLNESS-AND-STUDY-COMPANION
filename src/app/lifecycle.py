@@ -5,38 +5,36 @@ import time
 from fastapi import FastAPI
 
 from app.core.emotion import EmotionEngine
+from app.core.clothing import ClothingEngine
 from app.core.environment_classifier import EnvironmentClassifier
 
 logger = logging.getLogger("main")
 
-
 def _tick_loop(app: FastAPI) -> None:
     scheduler = app.state.scheduler
-    interval = 0.1  # 10 Hz tick keeps CPU low but feels realtime enough for scheduler updates
+    interval = 0.1
     next_tick = time.monotonic()
     while True:
         try:
             scheduler.tick()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.error(f"Tick loop error: {exc}")
         next_tick += interval
         sleep_for = max(0.0, next_tick - time.monotonic())
         if sleep_for:
             time.sleep(sleep_for)
         else:
-            # If tick runs long, realign to current time to avoid runaway loop
             next_tick = time.monotonic()
-
 
 def _load_model_background(app: FastAPI) -> None:
     logger.info("⏳ Memulai download/loading Model AI di background...")
     try:
         app.state.emotion = EmotionEngine()
+        app.state.clothing = ClothingEngine()
         app.state.is_model_loading = False
-        logger.info("✅ Model AI SIAP digunakan!")
-    except Exception as exc:  # noqa: BLE001
+        logger.info("✅ Model AI (Emotion & Clothing) SIAP digunakan!")
+    except Exception as exc:
         logger.error(f"❌ Gagal load model: {exc}")
-
 
 def register_events(app: FastAPI) -> None:
     @app.on_event("startup")
@@ -50,7 +48,7 @@ def register_events(app: FastAPI) -> None:
 
         try:
             env_classifier.load_or_train()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.error(f"Gagal memuat model lingkungan: {exc}")
 
         threading.Thread(target=_load_model_background, args=(app,), daemon=True).start()
