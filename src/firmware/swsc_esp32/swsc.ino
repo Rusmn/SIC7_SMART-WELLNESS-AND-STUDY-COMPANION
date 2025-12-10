@@ -24,6 +24,7 @@ const char* TPC_CONTROL_RESET         = "swsc/control/reset";
 
 const char* TPC_ALERT_BREAK           = "swsc/alert/break"; 
 const char* TPC_ALERT_WATER           = "swsc/alert/water";
+const char* TPC_ALERT_ENV             = "swsc/alert/env";
 
 const char* TPC_DATA_TEMP             = "swsc/data/temperature";
 const char* TPC_DATA_HUM              = "swsc/data/humidity";
@@ -320,6 +321,13 @@ void handleAlertWater(const String& p) {
     }
   } else if (p.startsWith("PING:")) {
     beepOnce(80);
+
+  }
+}
+
+void handleAlertEnv(const String& p) {
+  if (p == "WARNING") {
+    buzzPattern_TwoBeeps();
   }
 }
 
@@ -393,6 +401,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
   if (strcmp(topic, TPC_ALERT_WATER) == 0) {
     handleAlertWater(msg); return;
+  }
+  if (strcmp(topic, TPC_ALERT_ENV) == 0) {
+    handleAlertEnv(msg); return;
   }
 }
 

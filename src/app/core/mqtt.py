@@ -24,6 +24,7 @@ TOPIC_CONTROL_RESET = "swsc/control/reset"
 
 TOPIC_ALERT_BREAK = "swsc/alert/break"
 TOPIC_ALERT_WATER = "swsc/alert/water"
+TOPIC_ALERT_ENV = "swsc/alert/env"
 
 TOPIC_STATUS = "swsc/status/#"
 TOPIC_DATA = "swsc/data/#"

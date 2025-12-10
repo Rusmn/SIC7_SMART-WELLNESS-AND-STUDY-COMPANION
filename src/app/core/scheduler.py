@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from app.core.mqtt import TOPIC_ALERT_BREAK, TOPIC_ALERT_WATER, TOPIC_CONTROL_STOP
+from app.core.mqtt import TOPIC_ALERT_BREAK, TOPIC_ALERT_WATER, TOPIC_ALERT_ENV, TOPIC_CONTROL_STOP
 
 # Gunakan logger uvicorn agar tampil di konsol FastAPI
 logger = logging.getLogger("uvicorn")
@@ -65,6 +65,9 @@ class Scheduler:
         self._water_alarm_active: Dict[int, bool] = {}
         self._water_fired: Dict[int, bool] = {}
         self._last_water_buzz = 0.0
+        self.current_env_status = "ideal"
+        self._last_env_buzz = 0
+        self._is_env_buzzing = False
 
     def start(self, plan: StudyPlan):
         with self.lock:
@@ -135,14 +138,27 @@ class Scheduler:
         with self.lock:
             if not self.running or self.plan is None or self._last_tick is None:
                 return
+            
             now = time.time()
+            
+            if self.current_env_status == "tidak_ideal":
+                if now - self._last_env_buzz >= 2.0:
+                    self.mqtt.publish(TOPIC_ALERT_ENV, "WARNING")
+                    self._last_env_buzz = now
+            
+            elif self.current_env_status == "kurang_ideal":
+                if now - self._last_env_buzz >= 15.0:
+                    self.mqtt.publish(TOPIC_ALERT_ENV, "WARNING")
+                    self._last_env_buzz = now
+                    
             elapsed = int(now - self._last_tick)
             if elapsed <= 0:
                 self._buzz_water_if_needed(now)
                 return
             self._last_tick = now
-            since_start = int(now - self._start_epoch)
+            since_start = int(now - self._start_epoch)                    
 
+                    
             for idx, tsec in enumerate(self.plan.water_milestones):
                 if since_start >= tsec and not self._water_fired.get(idx, False):
                     logger.info(f"Water milestone {idx} reached at {tsec}s")
@@ -190,6 +206,9 @@ class Scheduler:
                 payload = "PING:" + ",".join(map(str, active_ids))
                 self.mqtt.publish(TOPIC_ALERT_WATER, payload)
                 self._last_water_buzz = now
+    
+    def set_env_status(self, status: str):
+        self.current_env_status = status
 
     def snapshot(self):
         with self.lock:

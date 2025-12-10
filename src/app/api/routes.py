@@ -20,6 +20,7 @@ from app.core.mqtt import (
     MQTTService,
     TOPIC_ALERT_BREAK,
     TOPIC_ALERT_WATER,
+    TOPIC_ALERT_ENV,
     TOPIC_CONFIG_BREAK_INTERVAL,
     TOPIC_CONFIG_BREAK_LENGTH,
     TOPIC_CONFIG_DURATION,
@@ -101,6 +102,8 @@ def _build_status_payload(
             cond = "Model not ready"
             alert = "tidak_ideal"
 
+    scheduler.set_env_status(alert)
+    
     return {
         "sensor": data,
         "status": cond,
@@ -388,8 +391,9 @@ async def camera_analyze(request: Request, file: UploadFile = File(...)):
 
         action = "NONE"
         if label in ["sad", "angry", "fear", "disgust"] and score > 0.5:
-            mqtt.publish(TOPIC_ALERT_BREAK, "START")
-            action = "TRIGGER_BREAK"
+            # mqtt.publish(TOPIC_ALERT_BREAK, "START")
+            # action = "TRIGGER_BREAK"
+            pass
 
         return {
             "emotion": latest_emotion, 
