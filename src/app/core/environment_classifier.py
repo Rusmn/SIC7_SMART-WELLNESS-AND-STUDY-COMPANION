@@ -13,8 +13,8 @@ logger = logging.getLogger("uvicorn")
 
 class EnvironmentClassifier:
     """
-    Wrapper for sensor-based classifier.
-    Uses RandomForest for better nonlinear separation; falls back to a synthetic model if none exists.
+    Wrapper untuk klasifikasi kondisi lingkungan berbasis suhu, kelembapan, dan pakaian.
+    Jika model tidak ada, akan melatih model sintetis sederhana (tanpa perlu dataset eksternal).
     """
 
     def __init__(self, model_path: Path):
@@ -39,7 +39,7 @@ class EnvironmentClassifier:
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(self.pipeline, self.model_path)
 
-    def predict(self, sensor_data: Dict[str, str]) -> Tuple[Optional[str], float]:
+    def predict(self, sensor_data: Dict[str, str], clothing_insulation: float = 1.0) -> Tuple[Optional[str], float]:
         if self.pipeline is None:
             return None, 0.0
 
@@ -48,7 +48,7 @@ class EnvironmentClassifier:
                 [
                     float(sensor_data.get("temperature", 0)),
                     float(sensor_data.get("humidity", 0)),
-                    float(sensor_data.get("light", 0)),
+                    float(clothing_insulation),
                 ]
             ).reshape(1, -1)
         except Exception as exc:  # noqa: BLE001
@@ -63,21 +63,20 @@ class EnvironmentClassifier:
     def _train_synthetic(self) -> Pipeline:
         rng = np.random.default_rng(42)
 
-        def block(mean_temp, mean_hum, mean_light, label, n=80):
+        def block(mean_temp, mean_hum, clothing, label, n=80):
             t = rng.normal(mean_temp, 1.8, n)
             h = rng.normal(mean_hum, 5.0, n)
-            l = rng.normal(mean_light, 20.0, n)
+            c = np.full(n, clothing)
             y = np.full(n, label)
-            return np.column_stack([t, h, l]), y
+            return np.column_stack([t, h, c]), y
 
         xs, ys = [], []
-        for mean_t, mean_h, mean_l, lbl in [
-            (25, 55, 150, "nyaman"),
-            (32, 35, 140, "panas_kering"),
-            (24, 80, 130, "lembap"),
-            (23, 60, 10, "gelap"),
+        for mean_t, mean_h, clothing, lbl in [
+            (25, 55, 1.0, "nyaman"),
+            (32, 35, 0.5, "panas_kering"),
+            (24, 80, 1.5, "lembap"),
         ]:
-            x, y = block(mean_t, mean_h, mean_l, lbl)
+            x, y = block(mean_t, mean_h, clothing, lbl)
             xs.append(x)
             ys.append(y)
 

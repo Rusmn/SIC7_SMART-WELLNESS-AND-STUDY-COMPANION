@@ -1,5 +1,8 @@
 from typing import Any, Dict
+import json
+import time
 
+import pandas as pd
 import streamlit as st
 from streamlit import components
 
@@ -12,10 +15,11 @@ except ImportError:  # pragma: no cover - fallback for direct script run
     from dashboard.utils import fmt_sec
 
 
-def navbar(metrics: Dict[str, Any], status: str, alert: str) -> None:
+def navbar(metrics: Dict[str, Any], status: str, alert: str, clothing: Dict[str, Any] | None = None) -> None:
     """Display sensor metrics in clean card layout."""
     light_txt = "Gelap" if str(metrics.get("light", "0")) == "0.0" or str(metrics.get("light", "0")) == "0" else "Terang"
     status_class = "status-good" if alert == "good" else "status-bad"
+    cloth_label = {0: "Tipis", 1: "Sedang", 2: "Tebal"}.get(int(clothing["insulation"])) if clothing and "insulation" in clothing else "-"
 
     col1, col2, col3, col4 = st.columns(4)
 
@@ -44,6 +48,7 @@ def navbar(metrics: Dict[str, Any], status: str, alert: str) -> None:
         <div class='metric-card'>
             <div class='metric-title'>Status</div>
             <div class='status-badge {status_class}'>{status}</div>
+            <div style='font-size:0.75rem; margin-top:6px; color:var(--text-soft);'>Pakaian: {cloth_label}</div>
         </div>
     """, unsafe_allow_html=True)
 
@@ -124,12 +129,15 @@ def tab_countdown(plan: Dict[str, Any], sched: Dict[str, Any]) -> None:
                 new_plan, _ = api_get_plan(int(dur))
                 if new_plan:
                     st.session_state["plan_cache"] = new_plan
+                st.rerun()
 
     with btn_col2:
         if st.button("⏹️ Stop", use_container_width=True):
             err = api_post("/stop", {})
             if err:
                 st.error(str(err))
+            else:
+                st.rerun()
 
     with btn_col3:
         if st.button("🔄 Reset", use_container_width=True):
@@ -139,6 +147,7 @@ def tab_countdown(plan: Dict[str, Any], sched: Dict[str, Any]) -> None:
             else:
                 if "plan_cache" in st.session_state:
                     del st.session_state["plan_cache"]
+                st.rerun()
 
     st.markdown("<h2>⏰ Countdown Timer</h2>", unsafe_allow_html=True)
     phase_name = sched.get("phase", "IDLE").upper()
@@ -308,32 +317,68 @@ def tab_emotion(data: Dict[str, Any]) -> None:
     emotion_key = emotion_label.lower() if isinstance(emotion_label, str) else "neutral"
     config = emotion_config.get(emotion_key, emotion_config["neutral"])
 
-    if emotion_label == "Menunggu...":
-        st.markdown("""
-            <div class="info-box">
-                📸 Real-time emotion detection from webcam.
-                The camera will automatically start when you begin a study session.
-            </div>
-        """, unsafe_allow_html=True)
-    else:
-        import datetime
-        timestamp_str = datetime.datetime.fromtimestamp(emotion_timestamp).strftime("%H:%M:%S") if emotion_timestamp > 0 else "-"
+    import datetime
+    timestamp_str = datetime.datetime.fromtimestamp(emotion_timestamp).strftime("%H:%M:%S") if emotion_timestamp > 0 else "-"
 
-        emotion_display = f"""
-        <div style="background:{config['bg']}; border-radius:14px; padding:2rem; text-align:center; border:2px solid {config['color']}; margin:1.5rem 0; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
-            <div style="font-size:4rem; margin-bottom:0.5rem;">{config['emoji']}</div>
-            <div style="font-size:1.75rem; font-weight:700; color:{config['color']}; margin-bottom:0.5rem;">
-                {config['text']}
-            </div>
-            <div style="font-size:1rem; color:#6a7380; margin-bottom:0.25rem;">
-                Confidence: <strong>{emotion_score*100:.1f}%</strong>
-            </div>
-            <div style="font-size:0.75rem; color:#999;">
-                Last updated: {timestamp_str}
-            </div>
+    emotion_display = f"""
+    <div style="background:{config['bg']}; border-radius:14px; padding:2rem; text-align:center; border:2px solid {config['color']}; margin:1.5rem 0; box-shadow: 0 4px 12px rgba(0,0,0,0.1);" id="emotion-card">
+        <div style="font-size:4rem; margin-bottom:0.5rem;" id="emotion-emoji">{config['emoji']}</div>
+        <div style="font-size:1.75rem; font-weight:700; color:{config['color']}; margin-bottom:0.5rem;" id="emotion-label">
+            {config['text']}
         </div>
-        """
-        st.markdown(emotion_display, unsafe_allow_html=True)
+        <div style="font-size:1rem; color:#6a7380; margin-bottom:0.25rem;">
+            Confidence: <strong id="emotion-score">{emotion_score*100:.1f}%</strong>
+        </div>
+        <div style="font-size:0.75rem; color:#999;">
+            Last updated: <span id="emotion-time">{timestamp_str}</span>
+        </div>
+    </div>
+    """
+    st.markdown(emotion_display, unsafe_allow_html=True)
+
+    # Live update via WebSocket (update kartu utama)
+    base = get_base_url()
+    ws_base = base.replace("https://", "wss://").replace("http://", "ws://")
+    ws_url = f"{ws_base}/ws/emotion"
+    emoji_map = {k: v["emoji"] for k, v in emotion_config.items()}
+    live_html = f"""
+    <script>
+        (function() {{
+            const map = {json.dumps(emoji_map)};
+            let ws;
+            function connect() {{
+                try {{
+                    ws = new WebSocket("{ws_url}");
+                    ws.onmessage = (evt) => {{
+                        try {{
+                            const em = JSON.parse(evt.data || "null");
+                            if (!em) return;
+                            const lblRaw = em.label || "Menunggu...";
+                            const lbl = lblRaw.toLowerCase();
+                            const scr = em.score !== undefined ? (parseFloat(em.score)*100).toFixed(1) + "%" : "-";
+                            const ts = em.timestamp ? new Date(em.timestamp*1000).toLocaleTimeString() : "-";
+                            const emojiEl = document.getElementById("emotion-emoji");
+                            const labelEl = document.getElementById("emotion-label");
+                            const scoreEl = document.getElementById("emotion-score");
+                            const timeEl = document.getElementById("emotion-time");
+                            if (emojiEl && map[lbl]) emojiEl.textContent = map[lbl];
+                            if (labelEl) labelEl.textContent = lblRaw;
+                            if (scoreEl) scoreEl.textContent = scr;
+                            if (timeEl) timeEl.textContent = ts;
+                        }} catch (e) {{
+                            console.warn("ws emotion parse error", e);
+                        }}
+                    }};
+                    ws.onclose = () => setTimeout(connect, 2000);
+                }} catch (e) {{
+                    setTimeout(connect, 2000);
+                }}
+            }}
+            connect();
+        }})();
+    </script>
+    """
+    components.v1.html(live_html, height=0)
 
     st.markdown("<h3>📷 Live Camera Feed</h3>", unsafe_allow_html=True)
 
@@ -559,11 +604,21 @@ def tab_monitor(data: Dict[str, Any]) -> None:
     """Environmental monitoring tab with sensor cards."""
     st.markdown("<h2>🌡️ Environment Monitoring</h2>", unsafe_allow_html=True)
 
-    env = data.get("env_prediction", {}) or {}
     sensor = data.get("sensor", {}) or {}
     status_text = data.get("status", "-")
     alert_level = data.get("alert_level", "unknown")
-    light_txt = "Gelap" if str(sensor.get("light", "0")) == "0" or str(sensor.get("light", "0")) == "0.0" else "Terang"
+    try:
+        light_val = float(sensor.get("light", 0) or 0)
+    except Exception:
+        light_val = 0.0
+    if light_val == 0:
+        light_txt = "Gelap"
+    elif light_val <= 50:
+        light_txt = "Redup"
+    else:
+        light_txt = "Terang"
+    clothing = data.get("clothing", {}) or {}
+    simulate = data.get("simulate", False)
 
     monitor_html = f"""
     <div class="monitor-grid" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:0.75rem; margin:1rem 0;">
@@ -583,13 +638,58 @@ def tab_monitor(data: Dict[str, Any]) -> None:
     """
     st.markdown(monitor_html, unsafe_allow_html=True)
 
-    if alert_level == "good":
+    # Simpan riwayat untuk chart
+    if "env_history" not in st.session_state:
+        st.session_state.env_history = []
+    try:
+        temp_val = float(sensor.get("temperature", 0))
+        hum_val = float(sensor.get("humidity", 0))
+    except Exception:
+        temp_val, hum_val = 0.0, 0.0
+    st.session_state.env_history.append({
+        "timestamp": time.time(),
+        "temperature": temp_val,
+        "humidity": hum_val,
+        "light": light_val,
+    })
+    st.session_state.env_history = st.session_state.env_history[-50:]
+
+    cloth_label = {0: "Tipis", 1: "Sedang", 2: "Tebal"}.get(int(clothing.get("insulation", 1)) if clothing else 1, "Sedang")
+    cloth_source = clothing.get("source", "default")
+    clothing_html = f"""
+    <div class="monitor-grid" style="display:grid; grid-template-columns: repeat(1, 1fr); gap:0.75rem; margin:0.5rem 0 1rem 0;">
+        <div class="monitor-card" style="background:white; border-radius:10px; padding:1rem; text-align:center; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border: 1px solid #e2e7f1;">
+            <div class="monitor-title" style="font-size:0.875rem; color:var(--text-soft); margin-bottom:0.5rem;">Pakaian Terdeteksi</div>
+            <div class="monitor-value" style="font-size:1.5rem; font-weight:700; color:var(--accent);">{cloth_label}</div>
+            <div style="font-size:0.75rem; color:var(--text-soft); margin-top:0.25rem;">Source: {cloth_source}</div>
+        </div>
+    </div>
+    """
+    st.markdown(clothing_html, unsafe_allow_html=True)
+
+
+    if st.session_state.env_history:
+        hist_df = pd.DataFrame(st.session_state.env_history)
+        hist_df["time"] = pd.to_datetime(hist_df["timestamp"], unit="s")
+        st.markdown("**📈 Grafik Historis (temp & humidity)**")
+        st.line_chart(hist_df.set_index("time")[["temperature", "humidity"]])
+
+    if simulate:
+        st.info("Simulation mode aktif: data tidak berasal dari MQTT.")
+
+    if alert_level == "ideal":
         summary_class = "good"
         summary_text = "Ideal"
         summary_color = "#2b612b"
         summary_bg = "#e6f7e6"
         summary_border = "#a0d9a0"
-    elif alert_level == "bad":
+    elif alert_level == "kurang_ideal":
+        summary_class = "warn"
+        summary_text = "Kurang Ideal"
+        summary_color = "#cc8a1f"
+        summary_bg = "#fff3cd"
+        summary_border = "#f1d99c"
+    elif alert_level == "tidak_ideal":
         summary_class = "bad"
         summary_text = "Tidak Ideal"
         summary_color = "#8c2e2e"
@@ -602,7 +702,8 @@ def tab_monitor(data: Dict[str, Any]) -> None:
         summary_bg = "#f4f4f4"
         summary_border = "#ddd"
 
-    env_label = env.get('label', summary_text)
+    # Tampilkan kondisi lingkungan hanya sebagai 3 kelas utama (Ideal/Kurang Ideal/Tidak Ideal)
+    env_label = summary_text
 
     summary_html = f"""
     <div class="monitor-summary-card {summary_class}" style="background:{summary_bg}; border-radius:10px; padding:1.5rem; text-align:center; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin:1.5rem 0; border: 2px solid {summary_border};">
