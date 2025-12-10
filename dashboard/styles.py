@@ -83,6 +83,7 @@ def build_custom_css(css_text: str) -> str:
 
     /* Tabs */
     .stTabs [data-baseweb="tab-list"] {{
+        margin-top: 30px;
         gap: 10px;
         justify-content: center;
         background: transparent;

@@ -32,11 +32,6 @@ def main() -> None:
     set_base_url(base)
 
     col_api, col_auto, col_refresh = st.columns([3, 1, 1])
-    with col_api:
-        st.caption(f"🔗 API: {base}")
-    with col_auto:
-        auto = st.checkbox("Auto refresh", value=True, help="Refresh every 5 seconds")
-        trigger_autorefresh(auto)
     with col_refresh:
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("🔄", use_container_width=True, help="Refresh now"):
