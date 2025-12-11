@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from app.core.mqtt import TOPIC_ALERT_BREAK, TOPIC_ALERT_WATER, TOPIC_ALERT_ENV, TOPIC_CONTROL_STOP
+from app.core.mqtt import TOPIC_ALERT_BREAK, TOPIC_ALERT_WATER, TOPIC_ALERT_ENV, TOPIC_CONTROL_STOP, TOPIC_ALERT_FINISHED
 
 # Gunakan logger uvicorn agar tampil di konsol FastAPI
 logger = logging.getLogger("uvicorn")
@@ -183,6 +183,8 @@ class Scheduler:
                         if self.total_remaining_sec == 0:
                             logger.info("Session completed!")
                             self.running = False
+                            self.phase = "completed"
+                            self.mqtt.publish(TOPIC_ALERT_FINISHED, "Session Completed")
                             self.mqtt.publish(TOPIC_CONTROL_STOP, "STOP", qos=1)
                         else:
                             self.phase_remaining_sec = min(self.plan.break_interval_min * 60, self.total_remaining_sec)
@@ -194,6 +196,8 @@ class Scheduler:
                     if self.total_remaining_sec == 0:
                         self.running = False
                         self.phase = "session"
+                        self.phase = "completed"
+                        self.mqtt.publish(TOPIC_ALERT_FINISHED, "Session Completed")
                         self.mqtt.publish(TOPIC_CONTROL_STOP, "STOP", qos=1)
                     else:
                         self.phase = "session"

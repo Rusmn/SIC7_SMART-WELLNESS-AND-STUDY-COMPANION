@@ -25,6 +25,7 @@ const char* TPC_CONTROL_RESET         = "swsc/control/reset";
 const char* TPC_ALERT_BREAK           = "swsc/alert/break"; 
 const char* TPC_ALERT_WATER           = "swsc/alert/water";
 const char* TPC_ALERT_ENV             = "swsc/alert/env";
+const char* TPC_ALERT_FINISHED        = "swsc/alert/finished";
 
 const char* TPC_DATA_TEMP             = "swsc/data/temperature";
 const char* TPC_DATA_HUM              = "swsc/data/humidity";
@@ -66,6 +67,7 @@ volatile bool led_state              = false;
 volatile bool session_running        = false;
 volatile bool in_break               = false;
 volatile bool session_stopped        = false;
+volatile bool session_completed      = false;
 
 // Water reminder alarms
 static const int MAX_WATER_ALARMS = 32; 
@@ -76,6 +78,10 @@ unsigned long lastSensorMs   = 0;
 unsigned long lastBuzzMs     = 0;
 unsigned long lastBlinkMs    = 0;
 unsigned long buzzUntilMs    = 0;
+unsigned long lastRedBlink   = 0;
+
+unsigned long completionStartTime = 0;
+const unsigned long COMPLETION_DURATION = 10000;
 
 // Buzzer patterns
 const uint16_t BUZZ_SHORT_MS = 120;
@@ -122,6 +128,12 @@ void buzzPattern_TwoBeeps() {
     beepOnce(BUZZ_SHORT_MS);
     delay(BUZZ_GAP_MS);
   }
+}
+
+void buzzPattern_Victory() {
+  tone(BUZZER_PIN, 1500); delay(100); noTone(BUZZER_PIN); delay(50);
+  tone(BUZZER_PIN, 1800); delay(100); noTone(BUZZER_PIN); delay(50);
+  tone(BUZZER_PIN, 2000); delay(600); noTone(BUZZER_PIN);
 }
 
 void clearDisplay() {
@@ -207,6 +219,15 @@ void showEnv(float t, float h, int light) {
   display.print("WiFi: "); display.print(WiFi.isConnected() ? "OK" : "OFF");
   display.setCursor(64, 48);
   display.print("MQTT: "); display.print(mqtt.connected() ? "OK" : "OFF");
+  display.display();
+}
+
+void showCompleted() {
+  clearDisplay();
+  drawCentered("COMPLETED!", 20, 2);
+  display.setTextSize(1);
+  display.setCursor(35, 45);
+  display.print("Good Job!");
   display.display();
 }
 
@@ -331,6 +352,20 @@ void handleAlertEnv(const String& p) {
   }
 }
 
+void handleAlertFinished() {
+    session_running = false;
+    session_completed = true;
+    in_break = false;
+    resetWaterAlarms();
+    
+    completionStartTime = millis();
+    showCompleted();
+    buzzPattern_Victory();
+    
+    publishStatus("Completed");
+    return;
+}
+
 // Control Handlers
 void handleControlStart() {
   if (!cfg_ready) {
@@ -405,6 +440,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   if (strcmp(topic, TPC_ALERT_ENV) == 0) {
     handleAlertEnv(msg); return;
   }
+  if (strcmp(topic, TPC_ALERT_FINISHED) == 0) {
+    handleAlertFinished(); return;
+  }
 }
 
 // Sensor Reading & Publishing
@@ -467,7 +505,6 @@ void setup() {
 
   showSplash();
   delay(1500);
-k
   setupWiFi();
   mqtt.setCallback(mqttCallback);
   connectMQTT();
@@ -518,7 +555,23 @@ void loop() {
     led_state = !led_state;
   }
 
-  if (anyWater || session_stopped || in_break) {
+  if (session_completed) {
+    if (now - completionStartTime >= COMPLETION_DURATION) {
+      session_completed = false;
+      if (cfg_ready) {
+        showConfigured();
+        publishStatus("Ready");
+      } else {
+        showWaiting();
+        publishStatus("Waiting for Config");
+      }
+    }
+  }
+
+  if (session_completed) {
+    if (led_state) ledColor(255, 0, 0);
+    else           ledColor(0, 0, 0); 
+  } else if (anyWater || session_stopped || in_break) {
     if (led_state) ledColor(255, 0, 0);
     else           ledColor(0, 0, 0); 
   } else if (session_running) {
