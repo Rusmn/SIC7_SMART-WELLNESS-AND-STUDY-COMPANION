@@ -5,7 +5,7 @@ Smart Wellness & Study Companion (SWSC) adalah sistem IoT berbasis ESP32 untuk m
 ## Fitur Utama
 - Pemantauan suhu, kelembapan, dan cahaya secara real-time via MQTT dan WebSocket.
 - Perhitungan rencana belajar (durasi belajar, jeda, dan target konsumsi air) dengan kontrol Start/Stop/Reset.
-- Prediksi kenyamanan lingkungan memakai model RandomForest (tersimpan di `src/models/environment.pkl`).
+- Prediksi kenyamanan lingkungan memakai model DTL (tersimpan di `src/models/environment.pkl`).
 - Deteksi emosi dari kamera, summary sesi, dan ekspor CSV.
 - Mode simulasi untuk demo tanpa perangkat IoT.
 
