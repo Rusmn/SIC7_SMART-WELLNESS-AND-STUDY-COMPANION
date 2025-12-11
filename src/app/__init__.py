@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.core.environment_classifier import EnvironmentClassifier
@@ -14,6 +15,14 @@ logger = logging.getLogger("main")
 
 def create_app() -> FastAPI:
     app = FastAPI(title="SWSC API", docs_url="/docs", redoc_url=None)
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     mqtt_service = MQTTService()
     scheduler = Scheduler(mqtt_service)

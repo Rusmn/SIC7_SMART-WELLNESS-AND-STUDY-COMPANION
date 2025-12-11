@@ -78,7 +78,7 @@ def main() -> None:
                     format_func=lambda x: {0: "Tipis", 1: "Sedang", 2: "Tebal"}.get(x, "Sedang"),
                 )
             with light_col:
-                st.session_state.sim_light = st.selectbox("Light", options=["Gelap", "Redup", "Terang"], index=["Gelap", "Redup", "Terang"].index(st.session_state.sim_light))
+                st.session_state.sim_light = st.selectbox("Light", options=["Gelap", "Terang"], index=["Gelap", "Terang"].index(st.session_state.sim_light))
     else:
         sim_placeholder.empty()
 
@@ -90,7 +90,7 @@ def main() -> None:
             f"&temperature={st.session_state.sim_temp}"
             f"&humidity={st.session_state.sim_hum}"
             f"&clothing_insulation={st.session_state.sim_cloth}"
-            f"&light={0 if st.session_state.sim_light == 'Gelap' else (50 if st.session_state.sim_light == 'Redup' else 150)}"
+            f"&light={0 if st.session_state.sim_light == 'Gelap' else 150}"
         )
 
     if st.session_state.sim_mode:

@@ -87,17 +87,7 @@ def _build_status_payload(
         label, conf = env_classifier.predict(data)
         if label:
             cond = str(label)
-            good_labels = {"nyaman", "aman", "ideal", "normal"}
-            
-            if cond.lower() in good_labels:
-                if conf >= 0.6:
-                    alert = "ideal"
-                elif conf >= 0.3:
-                    alert = "kurang_ideal"
-                else:
-                    alert = "tidak_ideal"
-            else:
-                alert = "tidak_ideal"
+            alert = "ideal" if label == "Ideal" else "kurang_ideal" if label == "Kurang Ideal" else "tidak_ideal"
         else:
             cond = "Model not ready"
             alert = "tidak_ideal"

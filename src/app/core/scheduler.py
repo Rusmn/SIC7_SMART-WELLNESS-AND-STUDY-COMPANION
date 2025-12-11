@@ -6,7 +6,6 @@ from typing import Dict, List, Optional
 
 from app.core.mqtt import TOPIC_ALERT_BREAK, TOPIC_ALERT_WATER, TOPIC_ALERT_ENV, TOPIC_CONTROL_STOP, TOPIC_ALERT_FINISHED
 
-# Gunakan logger uvicorn agar tampil di konsol FastAPI
 logger = logging.getLogger("uvicorn")
 
 @dataclass
@@ -14,7 +13,7 @@ class StudyPlan:
     duration_min: int
     break_interval_min: int
     break_count: int
-    break_length_min: int
+    break_length_min: float
     water_milestones: List[int]
     water_ml: int
     water_total_ml: int
@@ -22,16 +21,9 @@ class StudyPlan:
 def compute_plan(duration_min: int) -> StudyPlan:
     d = max(1, int(duration_min))
     
-    if d <= 30:
-        interval, bcount, blen = d, 0, 0
-    elif d <= 60:
-        interval, bcount, blen = 30, d // 30, 5
-    elif d <= 120:
-        interval, bcount, blen = 40, d // 40, 7
-    elif d <= 180:
-        interval, bcount, blen = 45, d // 45, 10
-    else:
-        interval, bcount, blen = 60, d // 60, 15
+    interval = 1
+    bcount = d // 1
+    blen = 0.25
 
     water_every = 30
     per_ml = 250

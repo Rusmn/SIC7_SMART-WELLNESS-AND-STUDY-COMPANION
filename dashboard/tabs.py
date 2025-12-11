@@ -297,6 +297,10 @@ def tab_countdown(plan: Dict[str, Any], sched: Dict[str, Any]) -> None:
     phase_sec = sched.get("phase_remaining_sec", 0)
     total_sec = sched.get("total_remaining_sec", 0)
 
+    base = get_base_url()
+    ws_base = base.replace("https://", "wss://").replace("http://", "ws://")
+    ws_url = f"{ws_base}/ws/status"
+
     display_html = f"""
     <style>
         body {{
@@ -312,6 +316,10 @@ def tab_countdown(plan: Dict[str, Any], sched: Dict[str, Any]) -> None:
             border: 1px solid rgba(0, 0, 0, 0.08);
             box-shadow: inset 0 1px 1px rgba(255,255,255,0.5), 0 2px 8px rgba(0,0,0,0.06);
             margin: 0;
+            transition: background 0.5s ease;
+        }}
+        .countdown-display.break-mode {{
+            background: linear-gradient(135deg, #fff3cd 0%, #fff8e1 100%);
         }}
         .phase-label {{
             font-weight: 700;
@@ -335,44 +343,76 @@ def tab_countdown(plan: Dict[str, Any], sched: Dict[str, Any]) -> None:
             margin-top: 0.5rem;
         }}
     </style>
-    <div class="countdown-display">
-        <div class="phase-label">{phase_name}</div>
-        <div class="phase-time" id="phase-timer">00:00</div>
+    <div class="countdown-display" id="timer-container">
+        <div class="phase-label" id="phase-label">{phase_name}</div>
+        <div class="phase-time" id="phase-timer">--:--</div>
         <div class="sub-time">
-            <strong>Total Remaining:</strong> <span id="total-timer">00:00</span>
+            <strong>Total Remaining:</strong> <span id="total-timer">--:--</span>
         </div>
+        <div style="font-size:0.75rem; color:#aaa; margin-top:10px;">⚡ Real-time synced</div>
     </div>
     <script>
         (function() {{
-            let phaseRemaining = {phase_sec};
-            let totalRemaining = {total_sec};
+            const wsUrl = "{ws_url}";
+            const initialPhase = {phase_sec};
+            const initialTotal = {total_sec};
+            
             const phaseEl = document.getElementById('phase-timer');
             const totalEl = document.getElementById('total-timer');
+            const labelEl = document.getElementById('phase-label');
+            const containerEl = document.getElementById('timer-container');
 
             function formatTime(seconds) {{
                 if (seconds < 0) seconds = 0;
                 const m = Math.floor(seconds / 60);
-                const s = seconds % 60;
+                const s = Math.floor(seconds % 60);
                 return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
             }}
+            
+            phaseEl.textContent = formatTime(initialPhase);
+            totalEl.textContent = formatTime(initialTotal);
 
-            function updateDisplay() {{
-                if (phaseEl) phaseEl.textContent = formatTime(phaseRemaining);
-                if (totalEl) totalEl.textContent = formatTime(totalRemaining);
+            function connect() {{
+                try {{
+                    const ws = new WebSocket(wsUrl);
+                    ws.onmessage = (evt) => {{
+                        try {{
+                            const data = JSON.parse(evt.data);
+                            const sched = data.scheduler || {{}};
+                            
+                            const pName = (sched.phase || "IDLE").toUpperCase();
+                            const pRem = sched.phase_remaining_sec || 0;
+                            const tRem = sched.total_remaining_sec || 0;
+                            
+                            labelEl.textContent = pName;
+                            phaseEl.textContent = formatTime(pRem);
+                            totalEl.textContent = formatTime(tRem);
+                            
+                            if (pName === "BREAK") {{
+                                containerEl.classList.add("break-mode");
+                                phaseEl.style.color = "#856404";
+                            }} else {{
+                                containerEl.classList.remove("break-mode");
+                                phaseEl.style.color = "#1e4b8a";
+                            }}
+                            
+                        }} catch (e) {{ console.warn("WS parse error", e); }}
+                    }};
+                    
+                    ws.onclose = () => {{
+                        setTimeout(connect, 2000);
+                    }};
+                    
+                }} catch (e) {{
+                    setTimeout(connect, 2000);
+                }}
             }}
 
-            function countdown() {{
-                if (phaseRemaining > 0) phaseRemaining--;
-                if (totalRemaining > 0) totalRemaining--;
-                updateDisplay();
-            }}
-
-            updateDisplay();
-            setInterval(countdown, 1000);
+            connect();
         }})();
     </script>
     """
-    components.v1.html(display_html, height=220)
+    components.v1.html(display_html, height=240)
 
 
 def tab_water(plan: Dict[str, Any], water_active: Dict[str, Any]) -> None:
@@ -632,6 +672,8 @@ def tab_monitor(data: Dict[str, Any]) -> None:
     })
     st.session_state.env_history = st.session_state.env_history[-50:]
 
+    history_json = json.dumps(st.session_state.env_history)
+
     base = get_base_url()
     ws_base = base.replace("https://", "wss://").replace("http://", "ws://")
     
@@ -641,6 +683,9 @@ def tab_monitor(data: Dict[str, Any]) -> None:
         ws_url = f"{ws_base}/ws/status"
 
     html_content = f"""
+    <head>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    </head>
     <style>
         body {{
             font-family: "Source Sans Pro", sans-serif;
@@ -688,6 +733,14 @@ def tab_monitor(data: Dict[str, Any]) -> None:
         
         .summary-title {{ font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem; }}
         .summary-value {{ font-size: 2rem; font-weight: 700; }}
+        
+        #chart-container {{
+            margin-top: 1.5rem;
+            background: white;
+            padding: 1rem;
+            border-radius: 10px;
+            border: 1px solid #e2e7f1;
+        }}
     </style>
 
     <div class="monitor-grid">
@@ -717,23 +770,84 @@ def tab_monitor(data: Dict[str, Any]) -> None:
         <div class="summary-title" id="summary-title">Environmental Condition</div>
         <div class="summary-value" id="summary-value">Wait...</div>
     </div>
+    
+    <div id="chart-container">
+        <canvas id="envChart"></canvas>
+    </div>
 
     <script>
         (function() {{
             const wsUrl = "{ws_url}";
-            const initialStatus = "{status_text}";
-            const initialAlert = "{alert_level}";
+            const initialHistory = {history_json};
             let ws;
+            let chart;
+
+            function initChart() {{
+                const ctx = document.getElementById('envChart').getContext('2d');
+                
+                const labels = initialHistory.map(h => new Date(h.timestamp * 1000).toLocaleTimeString());
+                const temps = initialHistory.map(h => h.temperature);
+                const hums = initialHistory.map(h => h.humidity);
+                
+                chart = new Chart(ctx, {{
+                    type: 'line',
+                    data: {{
+                        labels: labels,
+                        datasets: [
+                            {{
+                                label: 'Temperature (°C)',
+                                data: temps,
+                                borderColor: 'rgba(255, 99, 132, 1)',
+                                backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                                yAxisID: 'y',
+                                tension: 0.3
+                            }},
+                            {{
+                                label: 'Humidity (%)',
+                                data: hums,
+                                borderColor: 'rgba(54, 162, 235, 1)',
+                                backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                                yAxisID: 'y1',
+                                tension: 0.3
+                            }}
+                        ]
+                    }},
+                    options: {{
+                        responsive: true,
+                        interaction: {{
+                            mode: 'index',
+                            intersect: false,
+                        }},
+                        scales: {{
+                            y: {{
+                                type: 'linear',
+                                display: true,
+                                position: 'left',
+                                title: {{ display: true, text: 'Temperature' }}
+                            }},
+                            y1: {{
+                                type: 'linear',
+                                display: true,
+                                position: 'right',
+                                title: {{ display: true, text: 'Humidity' }},
+                                grid: {{
+                                    drawOnChartArea: false
+                                }}
+                            }}
+                        }}
+                    }}
+                }});
+            }}
 
             function updateUI(data) {{
                 if (!data) return;
                 
                 // Update Sensors
                 const s = data.sensor || {{}};
-                const temp = s.temperature !== undefined ? s.temperature : "-";
-                const hum = s.humidity !== undefined ? s.humidity : "-";
+                const temp = s.temperature !== undefined ? s.temperature : 0;
+                const hum = s.humidity !== undefined ? s.humidity : 0;
                 let lightVal = parseFloat(s.light || 0);
-                let lightTxt = lightVal == 0 ? "Gelap" : "Terang";
+                let lightTxt = lightVal === 0 ? "Gelap" : "Terang";
                 
                 document.getElementById("val-temp").innerText = temp;
                 document.getElementById("val-hum").innerText = hum;
@@ -741,7 +855,7 @@ def tab_monitor(data: Dict[str, Any]) -> None:
 
                 // Update Clothing
                 const c = data.clothing || {{}};
-                const ins = parseInt(c.insulation || 1);
+                const ins = c.insulation !== undefined ? parseInt(c.insulation) : 1;
                 const clothMap = {{0: "Tipis", 1: "Sedang", 2: "Tebal"}};
                 const clothSrc = c.source || "default";
                 document.getElementById("val-clothing").innerText = clothMap[ins] || "Sedang";
@@ -757,7 +871,7 @@ def tab_monitor(data: Dict[str, Any]) -> None:
                 let titleColor = "#6a7380";
                 let valText = "Data Tidak Tersedia";
                 
-                card.className = "monitor-summary-card"; // reset
+                card.className = "monitor-summary-card";
                 
                 if (alert === "ideal") {{
                     card.classList.add("summary-good");
@@ -778,6 +892,21 @@ def tab_monitor(data: Dict[str, Any]) -> None:
                 titleEl.style.color = titleColor;
                 valEl.style.color = titleColor;
                 valEl.innerText = valText;
+                
+                // Update Chart
+                if (chart) {{
+                    const now = new Date().toLocaleTimeString();
+                    chart.data.labels.push(now);
+                    chart.data.datasets[0].data.push(temp);
+                    chart.data.datasets[1].data.push(hum);
+                    
+                    if (chart.data.labels.length > 50) {{
+                        chart.data.labels.shift();
+                        chart.data.datasets[0].data.shift();
+                        chart.data.datasets[1].data.shift();
+                    }}
+                    chart.update();
+                }}
             }}
 
             function connect() {{
@@ -795,21 +924,13 @@ def tab_monitor(data: Dict[str, Any]) -> None:
                 }}
             }}
             
-            // Initial render with passed data before WS connects
-            // (Optional, just to show something immediately)
-            
+            initChart();
             connect();
         }})();
     </script>
     """
     
-    components.v1.html(html_content, height=450)
-
-    if st.session_state.env_history:
-        hist_df = pd.DataFrame(st.session_state.env_history)
-        hist_df["time"] = pd.to_datetime(hist_df["timestamp"], unit="s")
-        st.markdown("**📈 Grafik Historis (temp & humidity)**")
-        st.line_chart(hist_df.set_index("time")[["temperature", "humidity"]])
+    components.v1.html(html_content, height=800)
 
     if simulate:
         st.info("Simulation mode aktif.")
@@ -819,3 +940,6 @@ def tab_monitor(data: Dict[str, Any]) -> None:
             📡 Data diperbarui secara real-time via WebSocket
         </div>
     """, unsafe_allow_html=True)
+
+    with st.expander("🛠️ Debug Raw Data"):
+        st.write(f"**Alert Level Received:** `{alert_level}`")

@@ -39,6 +39,8 @@ class ClothingEngine:
             probs = outputs.logits_per_image.softmax(dim=1)
             predicted_index = probs.argmax().item()
             predicted_label = self.candidate_labels[predicted_index]
+            print("Detected Clothe:", predicted_label)
+            print()
             
             # Mapping ke 3 Kategori Utama
             if "sleeveless" in predicted_label or "t-shirt" in predicted_label:
