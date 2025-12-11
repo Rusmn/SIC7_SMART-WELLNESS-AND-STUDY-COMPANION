@@ -1,89 +1,67 @@
 # Smart Wellness and Study Companion
 
-<p align="center">
-  <img src="testing/Screenshot%202025-10-29%20124015.png" width="500">
-</p>
+Smart Wellness & Study Companion (SWSC) adalah sistem IoT berbasis ESP32 untuk membantu pelajar menjaga kesehatan dan fokus belajar. Sensor DHT11 dan LDR memantau suhu, kelembapan, serta cahaya, lalu data dikirim ke backend FastAPI dan ditampilkan di dashboard Streamlit. Sistem menambahkan pengingat minum, jadwal istirahat, serta deteksi emosi melalui kamera sebagai masukan kondisi belajar.
 
-Proyek Smart Wellness & Study Companion (SWSC) merupakan sistem IoT berbasis ESP32 yang dirancang untuk membantu pelajar menjaga kesehatan dan produktivitas selama belajar. Sistem ini memantau kondisi lingkungan seperti suhu, kelembapan, dan pencahayaan menggunakan sensor DHT11 dan LDR, lalu menampilkan data secara real-time melalui layar OLED dan antarmuka web. Selain itu, SWSC menyediakan fitur pengingat istirahat dan minum air otomatis dengan alarm buzzer serta indikator LED yang dikendalikan melalui protokol MQTT dan backend Flask. Melalui integrasi sensor, aktuator, serta kontrol waktu berbasis logika pemrograman, sistem ini bertujuan menciptakan pengalaman belajar yang lebih sehat, interaktif, dan adaptif terhadap kebutuhan pengguna
+## Fitur Utama
+- Pemantauan suhu, kelembapan, dan cahaya secara real-time via MQTT dan WebSocket.
+- Perhitungan rencana belajar (durasi belajar, jeda, dan target konsumsi air) dengan kontrol Start/Stop/Reset.
+- Prediksi kenyamanan lingkungan memakai model RandomForest (tersimpan di `src/models/environment.pkl`).
+- Deteksi emosi dari kamera, summary sesi, dan ekspor CSV.
+- Mode simulasi untuk demo tanpa perangkat IoT.
 
-## Struktur Singkat
+## Arsitektur Singkat
+- **Backend** (`src/`): FastAPI, scheduler, MQTT client, dan inference model lingkungan.
+- **Dashboard** (`dashboard/`): Streamlit UI yang memanggil API dan WebSocket backend.
+- **Training** (`scripts/train_env_model.py`, `src/app/training/env_model.py`): melatih model lingkungan dari CSV.
+- **Firmware** (`src/firmware/`): kode ESP32 CAM dan SWSC (tidak dijalankan di Python).
+- **Data/Model**: dataset di `data/`, model terlatih di `src/models/`.
 
-- `src/` : kode backend (FastAPI, scheduler, model inference) **dan** modul training ML (`app/training/env_model.py`).
-- `dashboard/` : UI Streamlit yang memanggil API backend.
-- `scripts/train_env_model.py` : wrapper CLI untuk memanggil modul training di `src/`.
-- `data/` & `src/models/` : lokasi dataset dan model terlatih.
-- `src/firmware/` : kode ESP32 (tidak dieksekusi Python, tetap dipertahankan).
+## Struktur Folder
+- `src/` – backend dan modul ML.
+- `dashboard/` – antarmuka Streamlit.
+- `scripts/` – utilitas pelatihan.
+- `data/` – data mentah dan olahan.
+- `src/models/` – model lingkungan terlatih.
+- `src/firmware/` – kode mikrokontroler.
 
-## Menjalankan Program
-
-1. Pastikan Perangkat IoT (hardware) tersedia dan terhubung
-
-2. Clone repository
-
+## Cara Menjalankan
+1) Siapkan Python 3 dan (opsional) virtualenv.  
+2) Instal dependensi:
 ```bash
-git clone <repository_url>
-cd SIC7_SMART-WELLNESS-AND-STUDY-COMPANION
+pip install -r requirements.txt
 ```
-3. Buat virtual environment (opsional)
-
-```bash
-python -m venv venv
-source venv/bin/activate   # Linux / macOS
-venv\Scripts\activate      # Windows
-```
-
-4. Install dependensi
-
-```bash
-pip install -r requirements.txt --default-timeout=300
-```
-
-5. Jalankan server FastAPI (hanya API, UI utama via Streamlit)
-
+3) Jalankan backend FastAPI:
 ```bash
 cd src
 python main.py
 ```
+Backend default di `http://localhost:5000`.
 
-6. Jalankan dashboard Streamlit (UI utama)
-
-```bash
-cd ..
-streamlit run dashboard/streamlit_app.py --server.port 8501
-```
-
-> Catatan: UI HTML/CSS lama tidak lagi dipakai; API tetap tersedia di port FastAPI (default 5000) untuk diakses Streamlit.
-
-## Pipeline AI/ML Lingkungan (baru)
-
-- **Data**: kumpulkan CSV minimal 150 baris dari sensor (`temperature, humidity, light, label`) ke `data/raw/environment.csv`.
-- **Training**: jalankan dari root repo:
-  - `python scripts/train_env_model.py --input data/processed/final_dataset.csv --output src/models/environment.pkl`
-  - atau (jika berada di folder `src/`): `python -m app.training.env_model --input ../data/processed/final_dataset.csv --output ./models/environment.pkl`
-- **Serving**: backend otomatis memuat model dari `src/models/environment.pkl` (atau melatih model sintetis fallback jika belum ada) lalu mengirim label & confidence ke dashboard dan MQTT alert.
-
-Struktur tambahan:
-```
-data/raw/              # simpan dataset mentah
-data/processed/        # opsional untuk dataset hasil bersih
-src/models/environment.pkl # hasil training classifier lingkungan
-scripts/train_env_model.py
-src/app/training/env_model.py
-```
-
-## Dashboard Streamlit
-
-Jalankan dashboard yang membaca API FastAPI:
+4) Jalankan dashboard Streamlit (dari root repo):
 ```bash
 streamlit run dashboard/streamlit_app.py --server.port 8501
 ```
-Atur `API Base URL` di UI (default `http://localhost:5000`). Tombol: Start/Stop/Reset plan, dan panel status sensor + prediksi ML realtime (klik Refresh bila perlu).
+Sesuaikan `API Base URL` di UI bila backend berada di host/port lain.
+
+## Dataset dan Pelatihan Model Lingkungan
+- Dataset olahan: `data/processed/final_dataset.csv` (format kolom: `temperature, humidity, light, label`).
+- Latih ulang model:
+```bash
+python scripts/train_env_model.py --input data/processed/final_dataset.csv --output src/models/environment.pkl
+```
+Backend akan memuat berkas model tersebut; jika tidak ada, ia melatih model sintetis bawaan agar prediksi tetap tersedia.
+
+## Dashboard dan Endpoint Utama
+- `/status` dan `ws://.../ws/status` – kirim data sensor, status scheduler, serta prediksi lingkungan ke UI.
+- `/camera/analyze` – terima gambar webcam untuk deteksi emosi dan pakaian.
+- `/emotion/summary` dan `/emotion/export` – ringkasan emosi sesi dan ekspor CSV.
+- Kontrol belajar: `/start`, `/stop`, `/reset`, serta `/water_ack` untuk kuota minum.
 
 ## Kontributor
 
-|          Nama          |
-| :--------------------: |
-|    Guntara Hambali     |
-| Nahiza Hazim Valensi M |
-|  Muh. Rusmin Nurwadin  |
-|   Reza Ahmad Syarif    |
+| Nama                  | Tugas                                                         |
+|-----------------------|--------------------------------------------------------------|
+| Guntara Hambali       | Menyusun laporan dan membuat kode model Machine Learning      |
+| Nahiza Hazim Valensi M| Merangkai komponen IoT dan membuat kode                       |
+| Muh. Rusmin Nurwadin  | Menyusun laporan dan membuat kode Dashboard                   |
+| Reza Ahmad Syarif     | Merangkai komponen IoT dan membuat kode                       |
